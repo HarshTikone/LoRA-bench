@@ -45,7 +45,14 @@ def scan(dataset_name: str, split: str, revision: str | None, limit: int) -> Non
         for r in raw_records
     )
 
-    cfg = DataConfig()  # the pipeline's actual current defaults, not a copy of them
+    # max_examples=None: this diagnostic's job is to report the true
+    # keep-rate/drop-reason breakdown among the `--limit` rows scanned. The
+    # pipeline's own default (max_examples=3000) would silently downsample
+    # `cleaned` to 3000 once more than that survives filtering -- fine for
+    # the pipeline (it's an intentional size cap), but it would make
+    # len(cleaned) a sample size instead of a keep count here, silently
+    # under-reporting the keep rate at any --limit above ~3000-4000.
+    cfg = DataConfig(max_examples=None)
     cleaned, drop_counts = filter_records(raw_records, cfg)
 
     print(f"scanned: {n}")

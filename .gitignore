@@ -10,8 +10,10 @@ checkpoints/
 # own GPU stack separately — see requirements-colab.txt)
 .venv/
 
-# Generated dataset artifacts — reproducible from scripts/prepare_data.py,
-# not checked in. Small hand-built fixtures live under tests/fixtures/ instead.
+# Generated dataset artifacts — reproducible via
+# `python -m lora_bench.data.cvefixes`, not checked in. The small
+# hand-built --dry-run/test sample lives in src/lora_bench/data/ instead,
+# as real package data (tracked, not ignored).
 /data/
 
 # Test/tooling cruft

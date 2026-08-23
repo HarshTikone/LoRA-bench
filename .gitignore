@@ -23,3 +23,7 @@ checkpoints/
 # Fine-tune outputs (Day 2+) and quantized artifacts (Day 3+)
 outputs/
 *.awq
+
+# Session scratch (e.g. hardening-pass prompts saved to the repo root before
+# being pasted in) — not project artifacts, never meant to be committed.
+/DAY1_FIX_PROMPT*.md

@@ -13,6 +13,18 @@ instead of an implicit boundary.
   tests against a bundled fixture and a `--dry-run` no-network smoke test;
   typed/validated YAML config. No GPU code, no notebook yet.
 
+  **Hardening pass (same day, after a deeper second review):** a real
+  crash bug (`clean_record` on a non-string code field), a real data-
+  corruption bug (`max_chars`/`max_seq_len` mismatch silently truncating
+  training labels), and an unpinned/unreproducible dataset revision were
+  all found and fixed, alongside a group-aware train/val/test split
+  (previous row-level split leaked near-duplicate CVE rows across the
+  boundary), a manifest.json for provenance, per-drop-reason accounting,
+  and several smaller correctness/packaging fixes. See ADR-0003 through
+  ADR-0005 and REVIEW.md for the full account — none of this was caught
+  by the first self-review pass, which is itself worth remembering going
+  into Day 2's review.
+
 - [ ] **Day 2 — LoRA/QLoRA fine-tuning (Colab, GPU).**
   The Colab notebook: load the Day 1 train/val JSONL, QLoRA fine-tune
   Qwen2.5-Coder-1.5B-Instruct (bitsandbytes 4-bit + PEFT), run the small

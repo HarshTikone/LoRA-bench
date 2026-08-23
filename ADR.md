@@ -160,7 +160,7 @@ pulling in (bump the pin deliberately, don't just drop it).
 `vulnerable_code` and `fixed_code`, so a single surviving example could
 carry up to ~8,000 characters of code plus the instruction text, while
 `ModelConfig.max_seq_len` (1024 tokens) is the actual training sequence
-budget. At a conservative ~3 chars/token for source code, a worst-case
+budget. At an assumed ~3 chars/token for source code, a worst-case
 pair needs on the order of 2,400-2,700+ tokens — roughly 2.5x the budget.
 Tokenizers truncate from the right, so the part that gets cut in a
 teacher-forced training example is the end of the sequence — the `output`
@@ -177,8 +177,8 @@ len(fixed_code)`, checked in `clean_record` alongside (not instead of) the
 existing per-field `max_chars`. `Config.__post_init__` (new — this
 invariant spans `data` and `model`, so it can't live in either section's
 own validator) rejects any config where `max_combined_chars` plus a fixed
-instruction-overhead estimate, divided by a conservative chars-per-token
-estimate, exceeds `max_seq_len`. `max_seq_len` itself stays at 1024.
+instruction-overhead estimate, divided by a chars-per-token estimate,
+exceeds `max_seq_len`. `max_seq_len` itself stays at 1024.
 
 **Why this option over the others:**
 - **Vs. raising `max_seq_len`:** covering the *full* per-field worst case
@@ -203,14 +203,25 @@ estimate, exceeds `max_seq_len`. `max_seq_len` itself stays at 1024.
 **The numbers behind `max_combined_chars = 2600`:** solved so that
 `(max_combined_chars + INSTRUCTION_OVERHEAD_CHARS_ESTIMATE) /
 CHARS_PER_TOKEN_ESTIMATE <= max_seq_len` with margin: at
-`CHARS_PER_TOKEN_ESTIMATE = 3.0` (chars/token; conservative because real
-code tokenizers typically run higher, ~3.5-4.5, so this demands *more*
-token budget than likely needed) and `INSTRUCTION_OVERHEAD_CHARS_ESTIMATE
-= 300` (rough pad for `INSTRUCTION_TEMPLATE`'s text plus chat-template
-role markers/special tokens, not measured), `(2600 + 300) / 3.0 ≈ 967`
-tokens worst case against a 1024 budget — about 5.6% margin. Both
-constants are named, documented as heuristics, and explicitly subordinate
-to real measurement.
+`CHARS_PER_TOKEN_ESTIMATE = 3.0` (chars/token; at design time, assumed
+typical for source code based on general BPE-tokenizer experience, not
+yet measured against this project's actual tokenizer/data) and
+`INSTRUCTION_OVERHEAD_CHARS_ESTIMATE = 300` (rough pad for
+`INSTRUCTION_TEMPLATE`'s text plus chat-template role markers/special
+tokens, not measured), `(2600 + 300) / 3.0 ≈ 967` tokens worst case
+against a 1024 budget — about 5.6% margin. Both constants are named,
+documented as heuristics, and explicitly subordinate to real measurement.
+**Correction (2026-08-23, second hardening pass):** `CHARS_PER_TOKEN_ESTIMATE`
+was originally documented here as "conservative... demands *more* token
+budget than likely needed," on the reasoning that real code tokenizers
+typically run *higher* than 3.0 chars/token (~3.5-4.5) on average. That
+framing is true of the *typical* case but wrong about what this constant
+needs to guard against: see "Measured, not just estimated" below, which
+found the *tail* of the real distribution runs *denser* than 3.0
+(~2.37 chars/token for the worst example measured), meaning this constant
+is a typical-case heuristic the tail can and does breach, not a margin
+that only ever over-provisions. `src/lora_bench/config.py`'s comment on
+`CHARS_PER_TOKEN_ESTIMATE` was corrected to match.
 
 **Measured, not just estimated:** `scripts/token_budget.py` was run (in a
 throwaway environment with `transformers` + `jinja2` installed — not the
@@ -238,13 +249,34 @@ avg characters lost to right-truncation among those examples: 1412
 
 So the fix took truncation-risking examples from 7.5% to 0.2% of the
 training set, and cut the average damage per still-affected example from
-~1,412 to ~448 characters. It is not a hard 100% guarantee — real
-token/char ratios vary per example (median tokens/char in this run was
-notably better than the conservative 3.0 estimate assumed, which is why
-the heuristic bound left a small residual rather than zero), and this
+~1,412 to ~448 characters. It is not a hard 100% guarantee, and the reason
+is the *tail*, not the median: the median example in this run tokenized
+much better than the 3.0 chars/token estimate assumed (229
+median tokens is well under what 3.0 chars/token would predict for a
+typical example's length), but `CHARS_PER_TOKEN_ESTIMATE` has to hold for
+the *worst* example, not the typical one, and the worst example in this
+run (1,223 tokens, against a nominal per-example cap around 2,900 chars —
+`max_combined_chars` (2600) plus the instruction-overhead estimate (300))
+implies a real worst-case ratio around 2,900 / 1,223 ≈ **2.37 chars/token**
+— denser than the 3.0 the heuristic assumes, not sparser. That's the
+actual source of the residual: a handful of examples (minified-looking
+code, dense low-level syntax, long identifiers/hex/base64 literals — all
+plausible in a CVE fix-diff corpus) tokenize at closer to 2.3-2.4
+chars/token than the assumed 3.0, so the char-based cap under-restricts
+them relative to their real token cost. (An earlier version of this ADR
+attributed the residual to the *median* being better than assumed, which
+is true but is the wrong causal story — a better-than-assumed median would
+imply the bound has slack everywhere, i.e. zero over-budget examples, not
+four. The residual comes specifically from the tail being worse than
+assumed, not the median being better; see `config.py`'s
+`CHARS_PER_TOKEN_ESTIMATE` comment, corrected alongside this.) This
 repo-side stage deliberately doesn't depend on the real tokenizer to stay
-GPU/Colab-independent. The residual 0.2% is a reasonable target for Day 2
-to close directly: once the real tokenizer is available there anyway, an
+GPU/Colab-independent, so `CHARS_PER_TOKEN_ESTIMATE = 3.0` remains a
+typical-case heuristic that this measurement shows the tail can and does
+breach, not a hard conservative bound — `scripts/token_budget.py`'s output
+is the authority on the real distribution, this constant is a cheap proxy
+for it. The residual 0.2% is a reasonable target for Day 2 to close
+directly: once the real tokenizer is available there anyway, an
 additional exact filter (`len(tokenizer(...).input_ids) <= max_seq_len`,
 not just the char heuristic) is a natural refinement, not a Day-1 gap.
 

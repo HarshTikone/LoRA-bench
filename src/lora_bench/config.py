@@ -16,14 +16,28 @@ import yaml
 
 _EPS = 1e-6
 
-# Conservative (i.e. deliberately low) chars-per-token estimate used only to
-# validate that DataConfig.max_combined_chars can't blow ModelConfig.max_seq_len
-# in the worst case. Real source code under a BPE tokenizer typically runs
-# closer to 3.5-4.5 chars/token; using a lower number here means this bound
-# demands MORE token budget than a real tokenizer likely needs, not less --
-# it's a safety margin, not a measurement. scripts/token_budget.py measures
-# the real distribution with the actual training tokenizer; treat that as
-# authoritative over this heuristic once it's been run.
+# Chars-per-token estimate used only to validate that
+# DataConfig.max_combined_chars can't blow ModelConfig.max_seq_len in the
+# worst case. This is a TYPICAL-case heuristic, not a hard conservative
+# bound: scripts/token_budget.py measured a real training split's median
+# tokens/char comfortably better than this 3.0 estimate, but its worst
+# example (1,223 tokens against a ~2,900-char nominal cap) implied a real
+# worst-case ratio around 2.37 chars/token -- denser than 3.0, i.e. the
+# tail can and does breach this constant (minified-looking code, dense
+# low-level syntax, and long identifier/hex/base64 literals all tokenize
+# below 3 chars/token, and are all plausible in a CVE fix-diff corpus).
+# A genuinely conservative bound would LOWER this constant (fewer assumed
+# chars per token -> Config.__post_init__ computes a higher worst-case
+# token count for the same char budget -> stricter check), not raise it.
+# It's left at 3.0 here rather than re-derived, because doing that
+# honestly means re-running token_budget.py against a live tokenizer and a
+# fresh dataset pull to measure the new margin, not just picking a smaller
+# number -- and this repo-side stage deliberately doesn't carry that
+# dependency. See ADR-0003 for the full measurement and the corrected
+# causal explanation (the residual comes from the tail being worse than
+# assumed, not the median being better, which an earlier version of that
+# ADR got backwards). Treat scripts/token_budget.py's actual output as
+# authoritative over this constant, not the other way around.
 CHARS_PER_TOKEN_ESTIMATE = 3.0
 
 # Rough pad (in characters) for INSTRUCTION_TEMPLATE's fixed text plus
@@ -173,7 +187,12 @@ class Config:
 
     def __post_init__(self) -> None:
         """Cross-section invariant: data.max_combined_chars must plausibly
-        fit within model.max_seq_len.
+        fit within model.max_seq_len, per a TYPICAL-case chars/token
+        heuristic (CHARS_PER_TOKEN_ESTIMATE) -- not a hard guarantee. See
+        that constant's comment and ADR-0003: scripts/token_budget.py's
+        real measurement shows this heuristic's tail can still be denser
+        than assumed, so passing this check is necessary, not sufficient,
+        evidence that every example will fit.
 
         Neither DataConfig nor ModelConfig alone can validate this (it spans
         both sections), and nothing did before ADR-0003 — max_chars=4000
@@ -190,7 +209,9 @@ class Config:
                 f"data.max_combined_chars ({self.data.max_combined_chars}) plus the "
                 f"instruction overhead estimate ({INSTRUCTION_OVERHEAD_CHARS_ESTIMATE} "
                 f"chars) could need ~{worst_case_tokens:.0f} tokens in the worst case "
-                f"(at a conservative {CHARS_PER_TOKEN_ESTIMATE} chars/token), which "
+                f"(at a TYPICAL-case, not guaranteed-conservative, "
+                f"{CHARS_PER_TOKEN_ESTIMATE} chars/token estimate -- see "
+                "CHARS_PER_TOKEN_ESTIMATE's comment and ADR-0003), which "
                 f"exceeds model.max_seq_len ({self.model.max_seq_len}). Raise "
                 "max_seq_len, lower data.max_combined_chars, or run "
                 "scripts/token_budget.py for the real measured distribution before "

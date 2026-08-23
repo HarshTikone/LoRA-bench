@@ -1,0 +1,30 @@
+# Default config for LoRA Bench. Mirrors the dataclass defaults in
+# src/lora_bench/config.py explicitly, so the values that actually drive a
+# run are reviewable here instead of hidden in code.
+#
+# See ADR.md for why these specific choices (model, dataset) and the
+# "Day 2 sweep" note in config.py for why the LoRA block is a starting
+# point rather than a final, defended value.
+
+data:
+  dataset_name: hitoshura25/cvefixes
+  dataset_split: train
+  languages: [Python, C, C++, JavaScript, Java, Go]
+  min_chars: 20
+  max_chars: 4000
+  max_examples: 3000
+  drop_noop_pairs: true
+  train_ratio: 0.8
+  val_ratio: 0.1
+  test_ratio: 0.1
+  seed: 42
+
+model:
+  base_model: Qwen/Qwen2.5-Coder-1.5B-Instruct
+  max_seq_len: 1024
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules: [q_proj, k_proj, v_proj, o_proj]

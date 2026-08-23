@@ -1,10 +1,9 @@
-# Repo-side tooling: data prep, config loading, unit tests.
-# Deliberately CPU-only and small — this is what runs in this environment
-# (no GPU) and in CI. GPU training/quantization deps live in
-# requirements-colab.txt and are installed inside the Colab notebook instead.
-datasets>=2.19
-huggingface_hub>=0.23
-python-dotenv>=1.0
-PyYAML>=6.0
-pytest>=8.0
-tqdm>=4.66
+# Thin pointer, not a second source of truth: the actual repo-side (CPU)
+# runtime dependencies are declared once, in pyproject.toml's
+# [project.dependencies] (and dev-only tools in [project.optional-
+# dependencies].dev), so `pip install -e .` and this file can't drift
+# apart the way two independently-maintained lists eventually do.
+#
+# GPU deps (torch, transformers, peft, bitsandbytes, ...) are never here --
+# see requirements-colab.txt, installed inside the Colab notebook instead.
+-e .[dev]

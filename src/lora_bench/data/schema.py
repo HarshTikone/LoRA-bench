@@ -55,6 +55,6 @@ class FixDiffExample:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, d: dict) -> "FixDiffExample":
+    def from_dict(cls, d: dict) -> FixDiffExample:
         known = {f for f in cls.__dataclass_fields__}
         return cls(**{k: v for k, v in d.items() if k in known})

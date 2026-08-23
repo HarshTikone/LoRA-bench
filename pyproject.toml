@@ -3,6 +3,18 @@ name = "lora-bench"
 version = "0.1.0"
 description = "Fine-tuning and inference-cost study: LoRA/QLoRA on CVE fix-diffs, base vs. fine-tuned vs. quantized."
 requires-python = ">=3.10"
+# Repo-side (CPU) runtime deps only -- the GPU stack (torch, transformers,
+# peft, bitsandbytes, ...) lives in requirements-colab.txt and is installed
+# inside the Colab notebook, never here or in CI.
+dependencies = [
+    "datasets>=2.19",
+    "huggingface_hub>=0.23",
+    "python-dotenv>=1.0",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.6"]
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -18,6 +30,17 @@ where = ["src"]
 # scheme would break under the latter, since the package would live in
 # site-packages with no tests/ directory alongside it.
 "lora_bench.data" = ["sample_records.json"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# Deliberately modest: pyflakes (unused imports/vars, undefined names) and
+# pycodestyle (style), plus isort (import order) and pyupgrade (modern
+# syntax). Not a strict/opinionated ruleset -- the goal is catching real
+# mistakes cheaply, not enforcing a house style.
+select = ["E", "F", "I", "UP"]
 
 [tool.pytest.ini_options]
 # Lets `pytest` resolve `import lora_bench...` even without the package

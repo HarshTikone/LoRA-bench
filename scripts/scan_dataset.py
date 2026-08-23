@@ -63,8 +63,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--dataset", default="hitoshura25/cvefixes")
     parser.add_argument("--split", default="train")
     parser.add_argument(
-        "--revision", default=None, help="Defaults to None (branch head) for this diagnostic; "
-        "the pipeline itself pins DataConfig.revision (see ADR-0002)."
+        "--revision",
+        default=None,
+        help="Defaults to None (branch head) for this diagnostic; "
+        "the pipeline itself pins DataConfig.revision (see ADR-0002).",
     )
     parser.add_argument("--limit", type=int, default=3000)
     args = parser.parse_args(argv)

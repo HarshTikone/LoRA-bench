@@ -55,6 +55,7 @@ class DropReason(str, Enum):
     NOOP_PAIR = "noop_pair"
     DUPLICATE = "duplicate"
 
+
 # Deliberately excludes the CVE ID -- see ADR-0005. It's kept as metadata on
 # FixDiffExample (used for the group-aware split and failure-case analysis)
 # but not embedded in the trained-on prompt text: at real inference time
@@ -181,9 +182,7 @@ def clean_record(raw: dict, cfg: DataConfig) -> tuple[dict | None, DropReason | 
     )
 
 
-def filter_records(
-    raw_records: Iterable[dict], cfg: DataConfig
-) -> tuple[list[dict], Counter]:
+def filter_records(raw_records: Iterable[dict], cfg: DataConfig) -> tuple[list[dict], Counter]:
     """clean_record() over every row, then dedup and (optionally) cap.
 
     Returns the cleaned/deduped/capped records alongside a Counter of why
@@ -368,6 +367,16 @@ def load_raw_dataset(dataset_name: str, split: str, revision: str | None = None)
 
     Validates the first row's schema against RAW_FIELDS before yielding
     anything — see _validate_raw_schema.
+
+    Deliberately non-streaming (loads the full split), unlike
+    scripts/scan_dataset.py's streaming=True. max_examples capping
+    (filter_records) samples uniformly at random from the whole filtered
+    pool specifically to avoid biasing toward whatever sorts first in
+    dataset order, and split_examples' group-aware split (ADR-0004) needs
+    to see every group before deciding assignments — both require the full
+    candidate pool up front, so streaming would only defer the cost, not
+    avoid it, while adding complexity for no real benefit at this
+    dataset's size (~13k rows).
     """
     from datasets import load_dataset  # local import: only needed on this path
 
@@ -393,7 +402,11 @@ def _load_fixture_records() -> list[dict]:
     directory alongside it, and parents[N] would land somewhere unrelated,
     breaking --dry-run: the first command a new reader runs.
     """
-    data = resources.files("lora_bench.data").joinpath("sample_records.json").read_text(encoding="utf-8")
+    data = (
+        resources.files("lora_bench.data")
+        .joinpath("sample_records.json")
+        .read_text(encoding="utf-8")
+    )
     return json.loads(data)
 
 
@@ -534,8 +547,10 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     stats = run_pipeline(cfg, raw_records, args.out_dir)
-    print(f"Wrote {stats['total']} examples to {args.out_dir}/ "
-          f"(train={stats['train']}, val={stats['val']}, test={stats['test']})")
+    print(
+        f"Wrote {stats['total']} examples to {args.out_dir}/ "
+        f"(train={stats['train']}, val={stats['val']}, test={stats['test']})"
+    )
     print(f"Manifest: {args.out_dir}/manifest.json")
     if stats["drop_counts"]:
         print("Dropped rows by reason:")

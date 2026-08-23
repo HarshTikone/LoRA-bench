@@ -134,7 +134,8 @@ def test_clean_record_drops_combined_too_long_even_when_each_field_is_individual
     # fields each comfortably under max_chars can still combine into more
     # code than the model's sequence budget allows.
     cfg = DataConfig(max_chars=2000, max_combined_chars=3000, min_chars=20)
-    rec = make_raw(vulnerable_code="a" * 1600, fixed_code="b" * 1600)  # each < 2000, sum 3200 > 3000
+    # each field < 2000 (max_chars), but their sum 3200 > 3000 (max_combined_chars)
+    rec = make_raw(vulnerable_code="a" * 1600, fixed_code="b" * 1600)
     assert clean_record(rec, cfg) == (None, DropReason.COMBINED_TOO_LONG)
 
 
@@ -185,8 +186,11 @@ def test_clean_record_drops_missing_identifiers():
     assert clean_record(make_raw(repo_url=None), cfg) == (None, DropReason.MISSING_IDENTIFIER)
 
 
+_TEXT_FIELDS = ["vulnerable_code", "fixed_code", "language", "cve_id", "hash", "repo_url"]
+
+
 @pytest.mark.parametrize("bad_value", [float("nan"), 3.14, 42, ["a", "b"], {"x": 1}])
-@pytest.mark.parametrize("field", ["vulnerable_code", "fixed_code", "language", "cve_id", "hash", "repo_url"])
+@pytest.mark.parametrize("field", _TEXT_FIELDS)
 def test_clean_record_drops_non_string_typed_fields_instead_of_crashing(field, bad_value):
     # Reproduces the pre-fix crash: a non-string value in a field the
     # pipeline treats as text (e.g. a float from an upstream column that
@@ -201,7 +205,8 @@ def test_clean_record_coerces_non_string_descriptive_fields_instead_of_dropping(
     # cwe_id/cwe_name/diff are metadata, not join keys or training-critical
     # content, so a wrong type there is coerced with str() rather than
     # treated as a broken row.
-    rec, reason = clean_record(make_raw(cwe_id=120, cwe_name=None, diff_with_context=["a", "b"]), DataConfig())
+    raw = make_raw(cwe_id=120, cwe_name=None, diff_with_context=["a", "b"])
+    rec, reason = clean_record(raw, DataConfig())
     assert reason is None
     assert rec is not None
     assert rec["cwe_id"] == "120"

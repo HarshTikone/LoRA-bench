@@ -13,8 +13,20 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install repo-side deps
-        run: |
-          pip install -r requirements-repo.txt
-          pip install -e .
+        run: pip install -r requirements-repo.txt
       - name: Run tests (no network — see pyproject.toml's "not network" marker)
         run: pytest -q
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install ruff
+        run: pip install "ruff>=0.6"
+      - name: ruff check
+        run: ruff check .
+      - name: ruff format --check
+        run: ruff format --check .

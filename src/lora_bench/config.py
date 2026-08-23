@@ -101,9 +101,7 @@ class DataConfig:
         if self.min_chars < 0:
             raise ValueError(f"min_chars must be >= 0, got {self.min_chars}")
         if self.max_chars <= self.min_chars:
-            raise ValueError(
-                f"max_chars ({self.max_chars}) must be > min_chars ({self.min_chars})"
-            )
+            raise ValueError(f"max_chars ({self.max_chars}) must be > min_chars ({self.min_chars})")
         if self.max_examples is not None and self.max_examples <= 0:
             raise ValueError(f"max_examples must be > 0 or null, got {self.max_examples}")
         if self.max_combined_chars < 2 * self.min_chars:

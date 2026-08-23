@@ -65,7 +65,9 @@ def test_config_rejects_combined_chars_that_cannot_fit_seq_len():
 def test_config_accepts_combined_chars_at_the_budget_boundary():
     max_seq_len = 1024
     # Exactly at the boundary: worst_case_tokens == max_seq_len.
-    max_combined_chars = round(max_seq_len * CHARS_PER_TOKEN_ESTIMATE) - INSTRUCTION_OVERHEAD_CHARS_ESTIMATE
+    max_combined_chars = (
+        round(max_seq_len * CHARS_PER_TOKEN_ESTIMATE) - INSTRUCTION_OVERHEAD_CHARS_ESTIMATE
+    )
     cfg = Config(
         data=DataConfig(max_combined_chars=max_combined_chars),
         model=ModelConfig(max_seq_len=max_seq_len),

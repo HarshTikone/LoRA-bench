@@ -38,7 +38,9 @@ def render_example(rec: dict, tokenizer) -> str:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("train_jsonl", type=Path, help="Path to a train.jsonl produced by cvefixes.py")
+    parser.add_argument(
+        "train_jsonl", type=Path, help="Path to a train.jsonl produced by cvefixes.py"
+    )
     parser.add_argument("--model", default="Qwen/Qwen2.5-Coder-1.5B-Instruct")
     parser.add_argument("--max-seq-len", type=int, default=1024)
     args = parser.parse_args(argv)

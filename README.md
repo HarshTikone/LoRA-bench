@@ -58,9 +58,13 @@ python -m venv .venv
 
 Copy `.env.example` to `.env` and fill in `HF_TOKEN` (a free, read-scope
 Hugging Face token) if you want to run data prep against the live dataset.
-`.env` is git-ignored and is for this repo-side tooling only — inside the
-Colab notebook, set the same token via Colab's Secrets panel instead; never
-hardcode a token in a notebook cell or commit it.
+The CLI loads `.env` automatically (via `python-dotenv`, searching from
+wherever you run the command upward — same convention as `.git`) before
+touching the network, so nothing else needs to reference the token
+explicitly: `huggingface_hub` picks `HF_TOKEN` up from the environment on
+its own. `.env` is git-ignored and is for this repo-side tooling only —
+inside the Colab notebook, set the same token via Colab's Secrets panel
+instead; never hardcode a token in a notebook cell or commit it.
 
 ## Running data prep
 

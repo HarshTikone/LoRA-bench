@@ -470,11 +470,39 @@ def run_pipeline(cfg: Config, raw_records: Iterable[dict], out_dir: str | Path) 
     return stats
 
 
+def _load_env_file() -> None:
+    """Load .env (see .env.example) into the process environment, if one
+    exists in the current directory or a parent of it. No-op if none is
+    found -- HF_TOKEN is documented as optional for this public dataset.
+
+    Nothing downstream needs to read the token explicitly:
+    huggingface_hub (and therefore datasets.load_dataset) already checks
+    HF_TOKEN in the environment automatically once it's there (confirmed
+    via huggingface_hub.get_token()) -- the only gap was that a .env file
+    on disk was never being loaded into the environment in the first
+    place, which made the README's "copy .env.example to .env" step inert.
+
+    Explicitly searches from the process's current working directory
+    (`usecwd=True`), not python-dotenv's default of searching from this
+    module's own file location. The default would always resolve to this
+    repo's own .env during development regardless of where a user runs the
+    command from, and would find nothing at all under a real installed
+    wheel (this package would live in site-packages, nowhere near a
+    project's .env) -- the same site-packages fragility the --dry-run
+    fixture path had before it was moved into package data.
+    """
+    from dotenv import find_dotenv, load_dotenv
+
+    load_dotenv(find_dotenv(usecwd=True))
+
+
 def main(argv: list[str] | None = None) -> int:
     """Returns an exit code (0 success, 1 failure) rather than calling
     sys.exit() directly, so tests can call main(argv) and check the return
     value instead of catching SystemExit.
     """
+    _load_env_file()
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="configs/default.yaml", help="Path to YAML config.")
     parser.add_argument(

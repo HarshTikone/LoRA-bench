@@ -8,6 +8,7 @@ the real dataset is documented in ADR.md instead).
 """
 
 import json
+import os
 import random
 
 import pytest
@@ -15,6 +16,7 @@ import pytest
 from lora_bench.config import Config, DataConfig
 from lora_bench.data.cvefixes import (
     DropReason,
+    _load_env_file,
     _load_fixture_records,
     build_dataset,
     clean_record,
@@ -507,6 +509,27 @@ def test_run_pipeline_writes_a_manifest_with_expected_shape(tmp_path):
     }
     assert counts["total"] == counts["train"] + counts["val"] + counts["test"]
     assert manifest["drop_counts"] == stats["drop_counts"]
+
+
+# --- .env loading ------------------------------------------------------------
+
+
+def test_load_env_file_populates_hf_token_from_dotenv(tmp_path, monkeypatch):
+    (tmp_path / ".env").write_text("HF_TOKEN=test-token-value\n", encoding="utf-8")
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.chdir(tmp_path)
+    try:
+        _load_env_file()
+        assert os.environ.get("HF_TOKEN") == "test-token-value"
+    finally:
+        monkeypatch.delenv("HF_TOKEN", raising=False)
+
+
+def test_load_env_file_is_a_noop_without_a_dotenv_file(tmp_path, monkeypatch):
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.chdir(tmp_path)
+    _load_env_file()  # must not raise just because no .env exists here
+    assert "HF_TOKEN" not in os.environ
 
 
 # --- main() / CLI -----------------------------------------------------------

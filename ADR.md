@@ -74,7 +74,8 @@ the original CVEfixes SQL dump on Zenodo.
   fix-commit rows for research/fine-tuning purposes.
 
 **Data-quality findings that directly shaped `DataConfig` defaults**
-(from streaming and scanning ~3,000 live rows on 2026-08-22, see
+(from streaming and scanning ~3,000 live rows on 2026-08-22; reproduce with
+`python scripts/scan_dataset.py --limit 3000` — see also
 `src/lora_bench/config.py` and `configs/default.yaml`):
 - `severity` is frequently the literal string `"nan"` rather than missing —
   normalized to `"UNKNOWN"` (`normalize_severity`), not left as a stray

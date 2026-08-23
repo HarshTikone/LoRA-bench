@@ -4,7 +4,6 @@
 # requirements-colab.txt and are installed inside the Colab notebook instead.
 datasets>=2.19
 huggingface_hub>=0.23
-pandas>=2.0
 PyYAML>=6.0
 pytest>=8.0
 tqdm>=4.66

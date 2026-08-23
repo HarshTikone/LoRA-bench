@@ -129,6 +129,12 @@ beyond the short fix-diff excerpts the dataset already provides.
 `Qwen/Qwen2.5-Coder-1.5B-Instruct` (Apache-2.0). See
 [ADR-0001](ADR.md#adr-0001--base-model-qwen25-coder-15b-instruct) for why.
 
+## License
+
+This repo's own code is [MIT-licensed](LICENSE). That covers the code in
+this repository only — it doesn't relicense the CVEfixes-derived dataset
+or the base model, each under its own terms noted above.
+
 ## Hard constraints this project holds itself to
 
 - Free tier only — no paid API keys, no paid Colab tier assumed.

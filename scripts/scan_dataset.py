@@ -71,9 +71,13 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--split", default="train")
     parser.add_argument(
         "--revision",
-        default=None,
-        help="Defaults to None (branch head) for this diagnostic; "
-        "the pipeline itself pins DataConfig.revision (see ADR-0002).",
+        default=DataConfig().revision,
+        help="Defaults to the pipeline's pinned revision (DataConfig.revision, "
+        "see ADR-0002), so this diagnostic scans the same snapshot the pipeline "
+        "actually reads -- a script whose job is producing ADR-0002's cited "
+        "numbers must not scan a different, possibly-moved snapshot by default. "
+        "Pass --revision main to deliberately scan the current branch head "
+        "instead, e.g. to check for upstream drift.",
     )
     parser.add_argument("--limit", type=int, default=3000)
     args = parser.parse_args(argv)

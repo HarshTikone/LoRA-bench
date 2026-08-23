@@ -2,7 +2,7 @@
 
 Pipeline stages, each a pure function over plain dicts/dataclasses so they
 can be unit tested without network access (see tests/test_cvefixes.py and
-tests/fixtures/sample_raw_records.json, which mirror the real schema
+sample_records.json alongside this module, which mirrors the real schema
 confirmed by streaming live rows on 2026-08-22):
 
     load_raw_dataset  -> raw dict per row (network; not unit tested)
@@ -27,6 +27,7 @@ import sys
 from collections import Counter
 from collections.abc import Iterable, Iterator
 from enum import Enum
+from importlib import resources
 from pathlib import Path
 from typing import Any
 
@@ -67,8 +68,6 @@ INSTRUCTION_TEMPLATE = (
     "({cwe_id}: {cwe_name}). Rewrite it to fix the vulnerability while "
     "preserving its intended behavior."
 )
-
-FIXTURE_PATH = Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "sample_raw_records.json"
 
 
 def parse_cve_description(raw: Any) -> str:
@@ -385,8 +384,17 @@ def load_raw_dataset(dataset_name: str, split: str, revision: str | None = None)
 
 
 def _load_fixture_records() -> list[dict]:
-    with FIXTURE_PATH.open("r", encoding="utf-8") as f:
-        return json.load(f)
+    """Bundled sample raw records for --dry-run and for unit tests.
+
+    Loaded as real package data via importlib.resources, not a path built
+    with Path(__file__).resolve().parents[N] into tests/ — that scheme only
+    resolves correctly from a source checkout. Under a non-editable `pip
+    install .`, this package lives in site-packages with no tests/
+    directory alongside it, and parents[N] would land somewhere unrelated,
+    breaking --dry-run: the first command a new reader runs.
+    """
+    data = resources.files("lora_bench.data").joinpath("sample_records.json").read_text(encoding="utf-8")
+    return json.loads(data)
 
 
 def run_pipeline(cfg: Config, raw_records: Iterable[dict], out_dir: str | Path) -> dict[str, Any]:

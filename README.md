@@ -33,9 +33,9 @@ src/lora_bench/
   data/
     schema.py         # FixDiffExample record shape
     cvefixes.py        # CVEfixes -> instruction-tuning JSONL pipeline
+    sample_records.json  # bundled --dry-run/test sample (real package data, not a tests/ path)
 configs/default.yaml  # the config values actually used by a run
 tests/                 # unit tests (no network — see "Tests" below)
-tests/fixtures/         # hand-built raw-record sample mirroring the real dataset schema
 notebooks/             # Colab notebook goes here starting Day 2
 ADR.md                 # dated decisions that specialize the default stack, and why
 ROADMAP.md             # day-by-day scope, so later days don't creep into each other

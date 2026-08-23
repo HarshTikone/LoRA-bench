@@ -7,15 +7,14 @@ smoke check in test_cvefixes_network.py-equivalent, which we don't add here;
 manual verification against the real HF Hub is documented in ADR.md instead).
 """
 
-import json
 import random
 
 import pytest
 
 from lora_bench.config import DataConfig
 from lora_bench.data.cvefixes import (
-    FIXTURE_PATH,
     DropReason,
+    _load_fixture_records,
     build_dataset,
     clean_record,
     filter_records,
@@ -32,8 +31,10 @@ from lora_bench.data.schema import FixDiffExample
 
 
 def load_fixture() -> list[dict]:
-    with FIXTURE_PATH.open("r", encoding="utf-8") as f:
-        return json.load(f)
+    # Reads the same packaged sample_records.json the CLI's --dry-run path
+    # reads (via _load_fixture_records) -- one copy of the sample data, not
+    # a separate tests/fixtures/ copy that could silently drift from it.
+    return _load_fixture_records()
 
 
 def make_raw(**overrides) -> dict:

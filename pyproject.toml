@@ -11,6 +11,14 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+# Bundled --dry-run/test sample -- see lora_bench.data.cvefixes._load_fixture_records.
+# Packaged (not a tests/ path) so it resolves the same from an editable
+# checkout or a real installed wheel; a Path(__file__).resolve().parents[N]
+# scheme would break under the latter, since the package would live in
+# site-packages with no tests/ directory alongside it.
+"lora_bench.data" = ["sample_records.json"]
+
 [tool.pytest.ini_options]
 # Lets `pytest` resolve `import lora_bench...` even without the package
 # installed — repo-side code must be runnable/testable outside Colab with

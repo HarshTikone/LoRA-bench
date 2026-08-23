@@ -300,6 +300,18 @@ def split_examples(
         assigned[chosen].extend(group)
         counts[chosen] += len(group)
 
+    ratios = {"train": cfg.train_ratio, "val": cfg.val_ratio, "test": cfg.test_ratio}
+    for name in split_order:
+        if ratios[name] > 0 and not assigned[name]:
+            raise ValueError(
+                f"{name} split came out empty even though {name}_ratio="
+                f"{ratios[name]} > 0 ({len(examples)} examples across "
+                f"{len(groups)} CVE groups). This silently produces, e.g., a "
+                "fine-tune with no validation signal and no error. Increase the "
+                "dataset size (raise max_examples, loosen filters) or set this "
+                "ratio to 0 if an empty split is genuinely intentional."
+            )
+
     return assigned["train"], assigned["val"], assigned["test"]
 
 

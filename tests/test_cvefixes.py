@@ -212,13 +212,28 @@ def test_filter_records_against_fixture_default_config():
     cleaned, drop_counts = filter_records(raw, cfg)
     kept_ids = {r["cve_id"] for r in cleaned}
 
-    # Fixture is built so exactly these 4 survive: a clean Python, C, and
-    # JavaScript row, plus a Java row with missing cwe/severity metadata
-    # (exercises the UNKNOWN-defaulting path). The rest are deliberately
-    # invalid: an exact duplicate, a no-op diff, an empty-code row, a
-    # disallowed language (Ruby), an oversized blob, and an undersized pair.
-    assert kept_ids == {"CVE-2023-0001", "CVE-2023-0002", "CVE-2023-0003", "CVE-2023-0009"}
-    assert len(cleaned) == 4  # confirms the exact duplicate was deduped, not just filtered
+    # Fixture is built so exactly these 10 survive: a clean Python, C, and
+    # JavaScript row, a Java row with missing cwe/severity metadata
+    # (exercises the UNKNOWN-defaulting path), and six more valid rows (one
+    # per default-allowlisted language) added so the bundled fixture is
+    # large enough to produce non-empty val/test splits under the default
+    # ratios -- see split_examples' empty-split guard. The rest are
+    # deliberately invalid: an exact duplicate, a no-op diff, an empty-code
+    # row, a disallowed language (Ruby), an oversized blob, and an
+    # undersized pair.
+    assert kept_ids == {
+        "CVE-2023-0001",
+        "CVE-2023-0002",
+        "CVE-2023-0003",
+        "CVE-2023-0009",
+        "CVE-2024-1001",
+        "CVE-2024-1002",
+        "CVE-2024-1003",
+        "CVE-2024-1004",
+        "CVE-2024-1005",
+        "CVE-2024-1006",
+    }
+    assert len(cleaned) == 10  # confirms the exact duplicate was deduped, not just filtered
     assert drop_counts == {
         DropReason.DUPLICATE.value: 1,
         DropReason.NOOP_PAIR.value: 1,
@@ -290,7 +305,7 @@ def test_to_example_builds_instruction_and_fields():
 def test_build_dataset_end_to_end_on_fixture():
     cfg = DataConfig()
     examples, drop_counts = build_dataset(load_fixture(), cfg)
-    assert len(examples) == 4
+    assert len(examples) == 10
     assert all(isinstance(e, FixDiffExample) for e in examples)
     assert sum(drop_counts.values()) == 6
 
@@ -380,6 +395,24 @@ def test_split_examples_never_splits_a_group_across_sets():
     assert not (val_ids & test_ids)
     # every example still lands somewhere, exactly once
     assert len(train) + len(val) + len(test) == len(examples)
+
+
+def test_split_examples_raises_on_empty_split_with_positive_ratio():
+    # A handful of examples with round() collapsing val/test to zero must
+    # not silently succeed -- that's a fine-tune with no validation signal
+    # and no error to say why.
+    cfg = DataConfig(train_ratio=0.8, val_ratio=0.1, test_ratio=0.1, seed=1)
+    examples = _dummy_examples(4)
+    with pytest.raises(ValueError, match="came out empty"):
+        split_examples(examples, cfg)
+
+
+def test_split_examples_allows_empty_split_when_its_ratio_is_zero():
+    cfg = DataConfig(train_ratio=0.5, val_ratio=0.5, test_ratio=0.0, seed=1)
+    examples = _dummy_examples(4)
+    train, val, test = split_examples(examples, cfg)
+    assert test == []  # empty, but ratio was 0 -- not an error
+    assert train and val  # sanity: the other two splits did get examples
 
 
 @pytest.mark.parametrize("seed", [1, 2, 3, 4, 5])

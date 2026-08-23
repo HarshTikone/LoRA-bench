@@ -1,17 +1,18 @@
 """Unit tests for the CVEfixes data-prep pipeline.
 
-All tests run against the bundled fixture (tests/fixtures/sample_raw_records.json)
-or synthetic in-memory records — no network access, per pyproject.toml's
-`-m "not network"` default (see also the `network` marker for the one live
-smoke check in test_cvefixes_network.py-equivalent, which we don't add here;
-manual verification against the real HF Hub is documented in ADR.md instead).
+All tests run against the bundled sample (src/lora_bench/data/sample_records.json,
+loaded via _load_fixture_records) or synthetic in-memory records — no network
+access, per pyproject.toml's `-m "not network"` default (the `network` marker
+is reserved for a live-HF-Hub test we don't have; manual verification against
+the real dataset is documented in ADR.md instead).
 """
 
+import json
 import random
 
 import pytest
 
-from lora_bench.config import DataConfig
+from lora_bench.config import Config, DataConfig
 from lora_bench.data.cvefixes import (
     DropReason,
     _load_fixture_records,
@@ -23,6 +24,7 @@ from lora_bench.data.cvefixes import (
     normalize_severity,
     parse_cve_description,
     read_jsonl,
+    run_pipeline,
     split_examples,
     to_example,
     write_jsonl,
@@ -476,13 +478,51 @@ def test_default_data_config_pins_a_real_looking_revision():
     assert all(c in "0123456789abcdef" for c in revision)
 
 
+# --- manifest ---------------------------------------------------------------
+
+
+def test_run_pipeline_writes_a_manifest_with_expected_shape(tmp_path):
+    cfg = Config()
+    stats = run_pipeline(cfg, load_fixture(), tmp_path)
+
+    manifest_path = tmp_path / "manifest.json"
+    assert manifest_path.exists()
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert "generated_at" in manifest
+    assert manifest["lora_bench_version"]
+    assert "git_sha" in manifest  # value may legitimately be None outside a git checkout
+
+    assert manifest["config"]["data"]["dataset_name"] == cfg.data.dataset_name
+    assert manifest["config"]["data"]["revision"] == cfg.data.revision
+    assert manifest["config"]["model"]["base_model"] == cfg.model.base_model
+    assert manifest["config"]["lora"]["r"] == cfg.lora.r
+
+    counts = manifest["counts"]
+    assert counts == {
+        "total": stats["total"],
+        "train": stats["train"],
+        "val": stats["val"],
+        "test": stats["test"],
+    }
+    assert counts["total"] == counts["train"] + counts["val"] + counts["test"]
+    assert manifest["drop_counts"] == stats["drop_counts"]
+
+
 # --- main() / CLI -----------------------------------------------------------
 
 
-def test_main_dry_run_succeeds_and_returns_zero(tmp_path):
+def test_main_dry_run_succeeds_and_returns_zero(tmp_path, capsys):
     exit_code = main(["--dry-run", "--out-dir", str(tmp_path)])
     assert exit_code == 0
     assert (tmp_path / "train.jsonl").exists()
+    assert (tmp_path / "val.jsonl").exists()
+    assert (tmp_path / "test.jsonl").exists()
+    assert (tmp_path / "manifest.json").exists()
+
+    out = capsys.readouterr().out
+    assert "Wrote 10 examples" in out
+    assert "manifest.json" in out
 
 
 def test_main_returns_nonzero_below_min_examples(tmp_path, capsys):

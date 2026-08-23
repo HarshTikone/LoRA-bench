@@ -397,6 +397,54 @@ def _load_fixture_records() -> list[dict]:
     return json.loads(data)
 
 
+def _get_git_sha() -> str | None:
+    """Best-effort current commit SHA of this checkout, for manifest
+    provenance. Returns None (not a placeholder) if this isn't a git
+    checkout or git isn't on PATH — provenance is nice-to-have, not
+    something a data-prep run should fail over.
+    """
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+        return result.stdout.strip()
+    except Exception:
+        return None
+
+
+def build_manifest(cfg: Config, stats: dict[str, Any]) -> dict[str, Any]:
+    """What produced a given train/val/test.jsonl -- written alongside them
+    as manifest.json. Without this, "here are the numbers" in a Day 4
+    report has no artifact behind it, and re-running data prep after any
+    config change silently invalidates a previous fine-tune with nothing
+    on disk to say so.
+    """
+    import dataclasses
+    from datetime import datetime, timezone
+
+    from lora_bench import __version__
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "lora_bench_version": __version__,
+        "git_sha": _get_git_sha(),
+        "config": dataclasses.asdict(cfg),
+        "counts": {
+            "total": stats["total"],
+            "train": stats["train"],
+            "val": stats["val"],
+            "test": stats["test"],
+        },
+        "drop_counts": stats["drop_counts"],
+    }
+
+
 def run_pipeline(cfg: Config, raw_records: Iterable[dict], out_dir: str | Path) -> dict[str, Any]:
     examples, drop_counts = build_dataset(raw_records, cfg.data)
     train, val, test = split_examples(examples, cfg.data)
@@ -406,13 +454,20 @@ def run_pipeline(cfg: Config, raw_records: Iterable[dict], out_dir: str | Path) 
     write_jsonl(val, out_dir / "val.jsonl")
     write_jsonl(test, out_dir / "test.jsonl")
 
-    return {
+    stats = {
         "total": len(examples),
         "train": len(train),
         "val": len(val),
         "test": len(test),
         "drop_counts": dict(drop_counts),
     }
+
+    manifest = build_manifest(cfg, stats)
+    (out_dir / "manifest.json").write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+    return stats
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -453,6 +508,7 @@ def main(argv: list[str] | None = None) -> int:
     stats = run_pipeline(cfg, raw_records, args.out_dir)
     print(f"Wrote {stats['total']} examples to {args.out_dir}/ "
           f"(train={stats['train']}, val={stats['val']}, test={stats['test']})")
+    print(f"Manifest: {args.out_dir}/manifest.json")
     if stats["drop_counts"]:
         print("Dropped rows by reason:")
         for reason, count in sorted(stats["drop_counts"].items(), key=lambda kv: -kv[1]):

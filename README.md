@@ -72,8 +72,16 @@ public dataset):
 .venv/Scripts/python -m lora_bench.data.cvefixes --config configs/default.yaml --out-dir data/processed
 ```
 
-Writes `data/processed/{train,val,test}.jsonl`. `data/` is git-ignored —
-it's regenerated from the script, not checked in.
+Writes `data/processed/{train,val,test}.jsonl` plus `manifest.json`
+alongside them — the config used (including the pinned dataset revision),
+this package's version, the git commit that produced the run (if
+available), per-split counts, and a breakdown of *why* every dropped row
+was dropped. `data/` is git-ignored — it's regenerated from the script,
+not checked in; the manifest is what lets a later run (or a human) tell
+what a given `train.jsonl` actually came from. The command also prints
+that drop-reason breakdown and exits non-zero (`--min-examples`, default
+1) if too few examples survive filtering, instead of silently succeeding
+on an empty dataset.
 
 Without network, to sanity-check the pipeline wiring against the bundled
 fixture sample instead of the real dataset:

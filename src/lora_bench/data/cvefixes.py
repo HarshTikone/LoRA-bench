@@ -546,7 +546,17 @@ def main(argv: list[str] | None = None) -> int:
             cfg.data.dataset_name, cfg.data.dataset_split, cfg.data.revision
         )
 
-    stats = run_pipeline(cfg, raw_records, args.out_dir)
+    try:
+        stats = run_pipeline(cfg, raw_records, args.out_dir)
+    except ValueError as e:
+        # Most likely split_examples' empty-split guard, e.g. every row got
+        # filtered out (0 examples, 0 groups) -- without this, that case
+        # propagates as a raw traceback instead of the same clean
+        # stderr-message-and-exit-1 shape as the --min-examples path below,
+        # even though both are "the pipeline effectively produced nothing."
+        print(f"ERROR: data-prep pipeline failed: {e}", file=sys.stderr)
+        return 1
+
     print(
         f"Wrote {stats['total']} examples to {args.out_dir}/ "
         f"(train={stats['train']}, val={stats['val']}, test={stats['test']})"

@@ -556,10 +556,26 @@ def test_main_dry_run_succeeds_and_returns_zero(tmp_path, capsys):
 def test_main_returns_nonzero_below_min_examples(tmp_path, capsys):
     # The fixture yields exactly 10 examples under default filtering (see
     # test_filter_records_against_fixture_default_config) -- 11 is
-    # unreachable, so this exercises the floor without also tripping
-    # split_examples' separate empty-split guard (which fires first on a
-    # truly empty result and would raise instead of returning cleanly).
+    # unreachable, so this exercises the --min-examples floor specifically,
+    # distinct from the true-zero-yield path exercised below.
     exit_code = main(["--dry-run", "--min-examples", "11", "--out-dir", str(tmp_path)])
+    assert exit_code == 1
+    assert "ERROR" in capsys.readouterr().err
+
+
+def test_main_returns_nonzero_cleanly_on_total_filtering_collapse(tmp_path, capsys):
+    # Every fixture row gets dropped (no allowlisted language matches),
+    # which makes split_examples' empty-split guard raise ValueError before
+    # main() ever reaches its --min-examples check. main() must still exit
+    # 1 with a clean stderr message, not propagate a raw traceback -- the
+    # two "pipeline produced nothing" failure modes should look the same to
+    # an operator, e.g. someone watching a Colab run's output.
+    config_path = tmp_path / "impossible.yaml"
+    config_path.write_text("data:\n  languages: [Rust]\n", encoding="utf-8")
+
+    exit_code = main(
+        ["--dry-run", "--config", str(config_path), "--out-dir", str(tmp_path / "out")]
+    )
     assert exit_code == 1
     assert "ERROR" in capsys.readouterr().err
 

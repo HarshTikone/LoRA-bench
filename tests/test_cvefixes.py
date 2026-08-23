@@ -8,6 +8,7 @@ manual verification against the real HF Hub is documented in ADR.md instead).
 """
 
 import json
+import random
 
 import pytest
 
@@ -336,6 +337,64 @@ def test_split_examples_deterministic_for_same_seed():
     assert [e.cve_id for e in a[0]] == [e.cve_id for e in b[0]]
     assert [e.cve_id for e in a[1]] == [e.cve_id for e in b[1]]
     assert [e.cve_id for e in a[2]] == [e.cve_id for e in b[2]]
+
+
+def _grouped_examples(n_groups: int, seed: int) -> list[FixDiffExample]:
+    """Synthetic examples with varied group sizes (some CVEs span several
+    rows, most don't) -- unlike _dummy_examples' all-unique cve_ids, this
+    is what actually exercises the group-aware split's group-packing logic.
+    """
+    rng = random.Random(seed)
+    examples = []
+    for g in range(n_groups):
+        size = rng.choice([1, 1, 1, 1, 2, 2, 3])
+        for i in range(size):
+            examples.append(
+                FixDiffExample(
+                    cve_id=f"CVE-{g}",
+                    cwe_id="CWE-0",
+                    cwe_name="n/a",
+                    severity="UNKNOWN",
+                    language="Python",
+                    repo_url=f"https://example.com/r{g}",
+                    commit_hash=f"h{g}-{i}",
+                    instruction="x",
+                    input=f"in{g}-{i}",
+                    output=f"out{g}-{i}",
+                    diff="",
+                )
+            )
+    return examples
+
+
+def test_split_examples_never_splits_a_group_across_sets():
+    examples = _grouped_examples(n_groups=150, seed=1)
+    cfg = DataConfig(seed=1)
+    train, val, test = split_examples(examples, cfg)
+
+    train_ids = {e.cve_id for e in train}
+    val_ids = {e.cve_id for e in val}
+    test_ids = {e.cve_id for e in test}
+    assert not (train_ids & val_ids)
+    assert not (train_ids & test_ids)
+    assert not (val_ids & test_ids)
+    # every example still lands somewhere, exactly once
+    assert len(train) + len(val) + len(test) == len(examples)
+
+
+@pytest.mark.parametrize("seed", [1, 2, 3, 4, 5])
+def test_split_examples_ratios_stay_within_tolerance(seed):
+    # Group sizes vary, so exact target ratios aren't achievable -- measured
+    # empirically to stay within ~1 percentage point at this scale; 0.05
+    # gives comfortable margin without being a vacuous assertion.
+    examples = _grouped_examples(n_groups=200, seed=seed)
+    cfg = DataConfig(train_ratio=0.8, val_ratio=0.1, test_ratio=0.1, seed=seed)
+    train, val, test = split_examples(examples, cfg)
+    total = len(examples)
+
+    assert abs(len(train) / total - 0.8) <= 0.05
+    assert abs(len(val) / total - 0.1) <= 0.05
+    assert abs(len(test) / total - 0.1) <= 0.05
 
 
 # --- load_raw_dataset (network call itself is mocked out) -----------------

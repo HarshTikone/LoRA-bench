@@ -226,6 +226,65 @@ for the fixes worth learning from regardless of the char budget, or the
 real tokenizer filter mentioned above turns out to remove enough examples
 to matter.
 
+## ADR-0004 — Group-aware train/val/test split, grouped by CVE ID
+
+**Date:** 2026-08-22 (Day 1 hardening pass)
+
+**The bug:** the dedup key in `filter_records` is `(commit_hash, repo_url,
+cve_id)`, and `split_examples` then shuffled and sliced at the *row*
+level. But a single CVE routinely spans several files fixed in one commit,
+or gets a follow-up fix commit later — both produce multiple rows sharing
+a `cve_id` but not deduped away by that key. Row-level random splitting
+therefore could put sibling rows of the same CVE — often the same fix,
+lightly varied — on both sides of the train/test boundary. Every quality
+number Day 4 would report off that test split was inflated by an unknown
+amount, and "the fine-tune improved exact-match by X" is the single claim
+this whole project exists to make defensibly.
+
+**Decision:** `split_examples` now groups examples by `cve_id` before
+splitting and assigns each group wholly to one split, via a deterministic
+largest-remaining-need greedy heuristic: shuffle group order (seeded),
+then repeatedly hand the next group to whichever split is furthest below
+its target count (ties broken train > val > test).
+
+**Why `cve_id` and not `repo_url`:** grouping by `repo_url` instead (or as
+well) would additionally guard against a *different*, smaller leak: a repo
+with a recurring bug pattern fixed across several distinct CVEs. But at
+this project's scale (~3k examples after filtering), some repos
+contribute disproportionately many rows — grouping by repo could force
+one or two repos' entire contribution into a single split, both distorting
+the realized ratios far more than CVE-grouping does and reducing
+language/pattern diversity in whichever split loses that repo entirely.
+CVE-level grouping directly closes the leak this ADR was written to fix
+(rows that are near-duplicates of the *same* fix); residual repo-level
+similarity across *different* CVEs is a real but smaller risk, deliberately
+left open rather than traded for a bigger diversity/balance cost today.
+
+**Measured ratio tolerance:** exact target ratios aren't achievable once
+grouping is in play (group sizes vary), so this is a heuristic, not a
+guarantee. Measured across 5 seeds on ~300-example synthetic data with
+mixed group sizes (see `tests/test_cvefixes.py`'s
+`test_split_examples_ratios_stay_within_tolerance`): realized train ratio
+stayed within 0.80 ± 0.01 of the 0.8 target, val/test within 0.10 ± 0.005
+of their 0.1 targets — well inside a 0.05 tolerance band the tests assert
+generously to avoid a flaky, over-tight bound.
+
+**Alternatives considered:**
+- *Keep row-level splitting, dedup harder instead*: doesn't work — the
+  existing dedup key already treats different files/commits of the same
+  CVE as distinct rows on purpose (they're genuinely different training
+  examples), so deduping them away would just lose data rather than fix
+  the leak.
+- *Group by (repo_url, cve_id) instead of cve_id alone*: rejected as
+  redundant — the leak mechanism described above is CVE-level, and this
+  wouldn't catch anything CVE-level grouping doesn't already catch, since
+  a CVE's sibling rows already share both fields in this dataset.
+
+**Revisit if:** Day 3/4's eval shows evidence of repo-level leakage
+mattering in practice (see ADR-0005's note on what that eval should check
+for), or a future, much larger dataset changes the diversity/balance
+trade-off against repo-grouping.
+
 ## ADR-0005 — Drop the CVE ID from the training prompt; keep CWE
 
 **Date:** 2026-08-22 (Day 1 hardening pass)

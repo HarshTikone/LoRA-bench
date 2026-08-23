@@ -257,26 +257,50 @@ def build_dataset(
 def split_examples(
     examples: list[FixDiffExample], cfg: DataConfig
 ) -> tuple[list[FixDiffExample], list[FixDiffExample], list[FixDiffExample]]:
-    """Deterministic seeded shuffle-then-slice train/val/test split.
+    """Deterministic, group-aware train/val/test split, grouped by cve_id.
+
+    Every example sharing a cve_id is assigned to the SAME split, never
+    split across the boundary. A single CVE routinely spans several files
+    fixed in one commit (or gets a follow-up fix commit later) — row-level
+    random splitting would put those near-duplicate rows of the same fix
+    on both sides of train/test, inflating whatever quality number gets
+    reported off that split. See ADR-0004 for the leakage this closes,
+    what it deliberately doesn't (repo-level leakage across *different*
+    CVEs), and the measured ratio tolerance this heuristic achieves.
 
     Same (examples, cfg.seed) always yields the same split — needed so a
     re-run of data prep doesn't silently change what Day 2 trains/evals on.
-    The test split absorbs rounding remainder so every example lands
-    somewhere and counts always sum to len(examples).
+    Group assignment is a deterministic largest-remaining-need greedy
+    heuristic (shuffle group order by seed, then repeatedly hand the next
+    group to whichever split is furthest below its target count, ties
+    broken train > val > test) — it can't hit the configured ratios
+    exactly when group sizes vary, but gets close while guaranteeing zero
+    cross-split leakage by construction.
     """
-    shuffled = list(examples)
-    random.Random(cfg.seed).shuffle(shuffled)
+    groups: dict[str, list[FixDiffExample]] = {}
+    for ex in examples:
+        groups.setdefault(ex.cve_id, []).append(ex)
 
-    n = len(shuffled)
-    n_train = round(n * cfg.train_ratio)
-    n_val = round(n * cfg.val_ratio)
-    n_train = min(n_train, n)
-    n_val = min(n_val, n - n_train)
+    group_ids = list(groups)
+    random.Random(cfg.seed).shuffle(group_ids)
 
-    train = shuffled[:n_train]
-    val = shuffled[n_train : n_train + n_val]
-    test = shuffled[n_train + n_val :]
-    return train, val, test
+    total = len(examples)
+    targets = {
+        "train": total * cfg.train_ratio,
+        "val": total * cfg.val_ratio,
+        "test": total * cfg.test_ratio,
+    }
+    counts = {"train": 0, "val": 0, "test": 0}
+    assigned: dict[str, list[FixDiffExample]] = {"train": [], "val": [], "test": []}
+    split_order = ("train", "val", "test")  # fixed tie-break order
+
+    for gid in group_ids:
+        group = groups[gid]
+        chosen = max(split_order, key=lambda name: targets[name] - counts[name])
+        assigned[chosen].extend(group)
+        counts[chosen] += len(group)
+
+    return assigned["train"], assigned["val"], assigned["test"]
 
 
 def write_jsonl(examples: Iterable[FixDiffExample], path: str | Path) -> None:

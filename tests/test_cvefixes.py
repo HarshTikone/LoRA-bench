@@ -275,9 +275,12 @@ def test_to_example_builds_instruction_and_fields():
     assert reason is None
     ex = to_example(cleaned)
     assert isinstance(ex, FixDiffExample)
+    # cve_id is kept as metadata (used for the group-aware split and
+    # failure-case analysis) but deliberately NOT embedded in the prompt
+    # text itself -- see ADR-0005.
     assert ex.cve_id == "CVE-1-1"
+    assert "CVE-1-1" not in ex.instruction
     assert "Python" in ex.instruction
-    assert "CVE-1-1" in ex.instruction
     assert "CWE-9" in ex.instruction
     assert ex.input == cleaned["vulnerable_code"]
     assert ex.output == cleaned["fixed_code"]

@@ -225,3 +225,66 @@ not just the char heuristic) is a natural refinement, not a Day-1 gap.
 for the fixes worth learning from regardless of the char budget, or the
 real tokenizer filter mentioned above turns out to remove enough examples
 to matter.
+
+## ADR-0005 — Drop the CVE ID from the training prompt; keep CWE
+
+**Date:** 2026-08-22 (Day 1 hardening pass)
+
+**Decision:** `INSTRUCTION_TEMPLATE` no longer embeds `{cve_id}`. The
+instruction now names only the language and CWE (e.g. "contains a known
+security vulnerability (CWE-79: Cross-site Scripting)"), not the specific
+CVE identifier. `cve_id` stays a field on `FixDiffExample` — it's still
+used for the group-aware split (ADR-0004) and is available for
+failure-case analysis in the Day 4 report — it's just not in the text the
+model is trained to condition on.
+
+**Why:**
+- **Distribution mismatch with the actual use case.** At real inference
+  time on an unknown vulnerability, there is no CVE ID to hand the model —
+  that's the entire premise of needing a fix in the first place. Training
+  the model to expect one in the prompt teaches a shortcut that won't
+  exist at the point this project claims to be useful.
+- **Memorization risk.** A CVE ID is a near-unique identifier per training
+  example — almost the definition of a key a model can memorize an output
+  against instead of learning the general skill of reading vulnerable code
+  and fixing it. That's a direct threat to the Day 4 quality claim: an
+  inflated exact-match number driven by ID memorization would look
+  identical to a genuine capability improvement without careful eval
+  design, and this project doesn't have a mechanism today to tell the two
+  apart.
+- **Why CWE stays, not just gets dropped too:** unlike a CVE ID, a CWE
+  (e.g. CWE-79, "Cross-site Scripting") is a coarse category shared by
+  hundreds of examples across the dataset — it can't function as a
+  memorization key the way a near-unique CVE ID can. It's also a
+  realistic signal: a real deployment of this kind of tool would plausibly
+  pair with a SAST/vulnerability scanner that flags *what kind* of
+  weakness it found, even without knowing it's specifically "CVE-2023-
+  0001." Keeping CWE frames the task as "given a flagged weakness
+  category, fix it" rather than either the unrealistic "given the exact
+  CVE" or the much vaguer, likely harder-to-learn "find and fix anything
+  wrong with this code, no hints."
+
+**How Day 3's eval should show this isn't just memorization:** this ADR
+is a design decision, not proof the risk is fully closed — closing it is
+eval work, not a data-prep-stage claim. The test split is disjoint at the
+CVE-group level (ADR-0004), which already prevents literal train/test
+duplication of the same CVE's rows. Day 3/4 should go further and report
+performance broken out at minimum by whether the exact CWE category
+appeared in training (it will, broadly, since CWEs repeat across many
+CVEs) versus a held-out sanity check on a handful of examples whose
+specific *repo* never appeared in training — the closest available proxy
+here for "does this generalize past a memorized specific case" given the
+dataset's structure. Flagged here now so it doesn't get improvised later.
+
+**Alternatives considered:**
+- *Keep the CVE ID*: rejected for the memorization/distribution-mismatch
+  reasons above.
+- *Drop CWE too, describe the task generically ("this code has a
+  vulnerability, fix it")*: rejected as a harder, vaguer training signal
+  with no realistic offsetting benefit — CWE isn't a memorization risk the
+  way CVE ID is, so dropping it buys safety it doesn't need to buy at a
+  real cost to how learnable the task is.
+
+**Revisit if:** Day 3/4's eval (see above) finds evidence of CWE-level (not
+just CVE-level) memorization, or finds the CWE-conditioning framing itself
+doesn't match how the eventual benchmark prompts are posed.

@@ -53,10 +53,18 @@ class DropReason(str, Enum):
     NOOP_PAIR = "noop_pair"
     DUPLICATE = "duplicate"
 
+# Deliberately excludes the CVE ID -- see ADR-0005. It's kept as metadata on
+# FixDiffExample (used for the group-aware split and failure-case analysis)
+# but not embedded in the trained-on prompt text: at real inference time
+# there is no CVE ID for an unknown vulnerability, and a near-unique
+# per-example identifier is exactly the kind of key a model can memorize
+# instead of learning the underlying fix. CWE is kept -- it's a coarse,
+# shared-across-many-examples category, and a realistic signal a real
+# pipeline could supply (e.g. a SAST tool flagging "CWE-79 here").
 INSTRUCTION_TEMPLATE = (
     "The following {language} code contains a known security vulnerability "
-    "({cve_id}, {cwe_id}: {cwe_name}). Rewrite it to fix the vulnerability "
-    "while preserving its intended behavior."
+    "({cwe_id}: {cwe_name}). Rewrite it to fix the vulnerability while "
+    "preserving its intended behavior."
 )
 
 FIXTURE_PATH = Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "sample_raw_records.json"
@@ -221,7 +229,6 @@ def to_example(rec: dict) -> FixDiffExample:
     """Map one cleaned record to the instruction-tuning example shape."""
     instruction = INSTRUCTION_TEMPLATE.format(
         language=rec["language"],
-        cve_id=rec["cve_id"],
         cwe_id=rec["cwe_id"],
         cwe_name=rec["cwe_name"],
     )

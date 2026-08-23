@@ -546,8 +546,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Use the bundled tests/fixtures sample instead of the live HF Hub "
-        "(no network) to smoke-test the pipeline wiring.",
+        help="Use the bundled sample_records.json package-data sample instead "
+        "of the live HF Hub (no network) to smoke-test the pipeline wiring.",
     )
     parser.add_argument(
         "--min-examples",

@@ -1,0 +1,26 @@
+# GPU-side stack — installed inside Colab notebook cells (free T4 tier),
+# NOT installed in this repo-side environment (no GPU here) and not part of
+# CI. This file exists so the intended stack is reviewable as text/diff
+# rather than buried in notebook cell output.
+#
+# Exact pins are finalized in Day 2 (fine-tuning) and Day 3 (quantization +
+# serving) against what actually resolves on a live Colab T4 runtime — a
+# version that installs cleanly today may not next week, and Colab's CUDA/
+# driver combo constrains what's installable. Treat this list as scope, not
+# a lockfile.
+#
+# Day 2 — LoRA/QLoRA fine-tuning:
+torch
+transformers
+peft
+bitsandbytes
+accelerate
+trl
+datasets
+sentencepiece
+
+# Day 3 — quantization + serving the quantized model for benchmarking
+# (llama.cpp/GGUF chosen vs. vLLM/AWQ gets a dated ADR.md entry once we
+# implement that day, per the stack-swap rule in the project brief):
+# llama-cpp-python
+# auto-gptq / autoawq (only if the ADR picks the AWQ path instead)

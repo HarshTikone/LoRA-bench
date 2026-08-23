@@ -1,0 +1,23 @@
+.env
+*.ipynb_checkpoints/
+__pycache__/
+*.pyc
+checkpoints/
+*.gguf
+*.safetensors
+
+# Local repo-side tooling env (Day 1 data-prep/test deps; Colab installs its
+# own GPU stack separately — see requirements-colab.txt)
+.venv/
+
+# Generated dataset artifacts — reproducible from scripts/prepare_data.py,
+# not checked in. Small hand-built fixtures live under tests/fixtures/ instead.
+/data/
+
+# Test/tooling cruft
+.pytest_cache/
+*.egg-info/
+
+# Fine-tune outputs (Day 2+) and quantized artifacts (Day 3+)
+outputs/
+*.awq

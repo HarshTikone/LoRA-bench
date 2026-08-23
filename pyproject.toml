@@ -1,0 +1,25 @@
+[project]
+name = "lora-bench"
+version = "0.1.0"
+description = "Fine-tuning and inference-cost study: LoRA/QLoRA on CVE fix-diffs, base vs. fine-tuned vs. quantized."
+requires-python = ">=3.10"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+# Lets `pytest` resolve `import lora_bench...` even without the package
+# installed — repo-side code must be runnable/testable outside Colab with
+# nothing more than requirements-repo.txt installed. Running the CLI
+# directly (`python -m lora_bench...`) instead of via pytest still needs
+# either `pip install -e .` or `PYTHONPATH=src`; see README.md.
+pythonpath = ["src"]
+testpaths = ["tests"]
+markers = [
+    "network: hits a live external service (e.g. the HF Hub); skipped by default and in CI",
+]
+addopts = "-m 'not network'"

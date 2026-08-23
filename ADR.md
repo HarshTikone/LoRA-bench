@@ -271,8 +271,40 @@ this whole project exists to make defensibly.
 **Decision:** `split_examples` now groups examples by `cve_id` before
 splitting and assigns each group wholly to one split, via a deterministic
 largest-remaining-need greedy heuristic: shuffle group order (seeded),
-then repeatedly hand the next group to whichever split is furthest below
-its target count (ties broken train > val > test).
+stable-sort descending by group size (largest-first, a.k.a.
+longest-processing-time-first bin packing), then repeatedly hand the next
+group to whichever split is furthest below its target count (ties broken
+train > val > test).
+
+**Amendment (2026-08-23, second hardening pass): sort groups largest-first.**
+The original version above omitted the largest-first sort — groups were
+handed out in shuffled order only. That's fine when group sizes are
+roughly uniform, but this dataset's group sizes are heavy-tailed:
+`filter_records`' dedup key is per changed file, so a CVE fixed across 40
+files is a single 40-row group, and a handful of much larger groups
+alongside many singletons is the *expected* shape, not a corner case. In
+shuffled-only order, a large group lands wherever the shuffle happens to
+put it and can overshoot its split's target with nothing later able to
+compensate — measured on two synthetic heavy-tailed scenarios (10 seeds
+each, target ratios 0.8/0.1/0.1):
+
+```
+280 singletons + 6 groups of 60-200 rows:  worst |deviation| = 0.102
+300 singletons + 1 group of 700 rows:      worst |deviation| = 0.192
+```
+
+A test split that can land at 1.5% or 20% depending on the seed is not one
+you can report a number off. Processing groups largest-first fixes this:
+place the big groups first, while every split still has room to absorb
+one, then let the many small/singleton groups fine-tune the remainder
+toward target. Measured on the identical two scenarios after the fix:
+
+```
+280 singletons + 6 groups of 60-200 rows:  worst |deviation| = 0.000
+300 singletons + 1 group of 700 rows:      worst |deviation| = 0.000
+```
+
+This is not a guarantee in general — see the residual note below.
 
 **Why `cve_id` and not `repo_url`:** grouping by `repo_url` instead (or as
 well) would additionally guard against a *different*, smaller leak: a repo
@@ -289,12 +321,43 @@ left open rather than traded for a bigger diversity/balance cost today.
 
 **Measured ratio tolerance:** exact target ratios aren't achievable once
 grouping is in play (group sizes vary), so this is a heuristic, not a
-guarantee. Measured across 5 seeds on ~300-example synthetic data with
-mixed group sizes (see `tests/test_cvefixes.py`'s
-`test_split_examples_ratios_stay_within_tolerance`): realized train ratio
-stayed within 0.80 ± 0.01 of the 0.8 target, val/test within 0.10 ± 0.005
-of their 0.1 targets — well inside a 0.05 tolerance band the tests assert
-generously to avoid a flaky, over-tight bound.
+guarantee, and the achievable tolerance depends heavily on the group-size
+distribution measured — a fixture that only ever draws small group sizes
+cannot demonstrate a property of the general heuristic, only of that
+fixture. Two shapes were measured, both after the largest-first fix above:
+
+- ~300-example synthetic data with *small* mixed group sizes (1-3), 5 seeds
+  (`test_split_examples_ratios_stay_within_tolerance`): worst realized
+  deviation from target across all three splits was 0.002.
+- ~900-1100-example synthetic data with *realistic heavy-tailed* group
+  sizes (280 singletons + 6 groups of 60-200 rows), 10 seeds
+  (`test_split_examples_ratios_stay_within_tolerance_under_group_size_skew`):
+  worst deviation 0.0007. A second heavy-tailed shape (300 singletons + one
+  700-row group), 10 seeds
+  (`test_split_examples_ratios_stay_within_tolerance_with_one_dominant_group`):
+  worst deviation 0.000.
+
+All three are asserted at a 0.01 tolerance band in the test suite — tight
+enough that it would have failed against the pre-largest-first-fix
+behavior (0.102 and 0.192 respectively on the two heavy-tailed shapes
+above), not the old 0.05 band, which was loose enough to pass even the
+unfixed heuristic on small-group-size data alone.
+
+**The residual this doesn't close:** when a single group is larger than an
+entire split's target count, no ordering can prevent that split from
+overshooting once it receives that group — e.g. a 950-of-1000-row CVE
+must overshoot whichever split it lands in, since satisfying "take the
+whole group" and "stay near a ~10% target" are mutually exclusive for that
+split. `test_split_examples_cannot_balance_a_group_larger_than_a_splits_target`
+documents this directly: the leakage guarantee (no group divided across
+splits) still holds, but the realized ratio for the split that receives
+the oversized group deviates far outside the 0.01 band above. This is
+inherent to group-level splitting, not a defect this ADR's fix leaves
+open by oversight; the real dataset's largest observed group (a CVE
+touching dozens of files) is far short of the ~10-20% test/val target size
+at this project's scale (~3k post-filter examples), so it isn't expected
+to bite in practice, but it's worth stating plainly rather than implying
+the heuristic is exact.
 
 **Alternatives considered:**
 - *Keep row-level splitting, dedup harder instead*: doesn't work — the

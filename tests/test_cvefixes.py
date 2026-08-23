@@ -393,6 +393,67 @@ def _grouped_examples(n_groups: int, seed: int) -> list[FixDiffExample]:
     return examples
 
 
+def _heavy_tailed_grouped_examples(
+    seed: int, n_singletons: int = 280, big_sizes: tuple = ()
+) -> list[FixDiffExample]:
+    """Synthetic examples with realistic heavy-tailed group-size skew: mostly
+    singletons, plus a handful of groups one-to-two orders of magnitude
+    larger. This is the shape that actually occurs here: filter_records'
+    dedup key is (commit_hash, repo_url, cve_id), one row per changed file,
+    so a single CVE fixed across 40 files is a single 40-row group.
+
+    _grouped_examples above only ever draws sizes up to 3 -- comfortably
+    within noise for the greedy split, and unable to exercise the failure
+    mode largest-first ordering exists to fix: a single large group landing
+    wherever an arbitrary shuffle puts it and overshooting its split's
+    target with nothing later able to compensate. Before largest-first
+    sorting was added to split_examples, this exact shape (280 singletons +
+    6 groups of 60-200 rows) measured a worst-case realized-ratio deviation
+    of 0.102 across 10 seeds, and a related one-dominant-group shape
+    (300 singletons + 1 group of 700) measured 0.192 -- both collapse to
+    0.000 after the fix (see this module's tolerance test below and
+    ADR-0004's "Measured ratio tolerance" section).
+    """
+    rng = random.Random(seed)
+    if not big_sizes:
+        big_sizes = tuple(rng.randint(60, 200) for _ in range(6))
+    examples = []
+    for g in range(n_singletons):
+        examples.append(
+            FixDiffExample(
+                cve_id=f"CVE-s{g}",
+                cwe_id="CWE-0",
+                cwe_name="n/a",
+                severity="UNKNOWN",
+                language="Python",
+                repo_url=f"https://example.com/rs{g}",
+                commit_hash=f"hs{g}",
+                instruction="x",
+                input=f"ins{g}",
+                output=f"outs{g}",
+                diff="",
+            )
+        )
+    for g, size in enumerate(big_sizes):
+        for i in range(size):
+            examples.append(
+                FixDiffExample(
+                    cve_id=f"CVE-big{g}",
+                    cwe_id="CWE-0",
+                    cwe_name="n/a",
+                    severity="UNKNOWN",
+                    language="Python",
+                    repo_url=f"https://example.com/rbig{g}",
+                    commit_hash=f"hbig{g}-{i}",
+                    instruction="x",
+                    input=f"inbig{g}-{i}",
+                    output=f"outbig{g}-{i}",
+                    diff="",
+                )
+            )
+    return examples
+
+
 def test_split_examples_never_splits_a_group_across_sets():
     examples = _grouped_examples(n_groups=150, seed=1)
     cfg = DataConfig(seed=1)
@@ -428,17 +489,119 @@ def test_split_examples_allows_empty_split_when_its_ratio_is_zero():
 
 @pytest.mark.parametrize("seed", [1, 2, 3, 4, 5])
 def test_split_examples_ratios_stay_within_tolerance(seed):
-    # Group sizes vary, so exact target ratios aren't achievable -- measured
-    # empirically to stay within ~1 percentage point at this scale; 0.05
-    # gives comfortable margin without being a vacuous assertion.
+    # Group sizes vary, so exact target ratios aren't achievable -- but with
+    # largest-first ordering, measured worst deviation on this fixture
+    # (200 groups, sizes 1/1/1/1/2/2/3) across these 5 seeds is 0.002, so
+    # 0.01 is a tight band the current implementation actually earns, not
+    # the old 0.05 (which was loose enough to pass even the pre-fix,
+    # shuffle-order-only heuristic on this small-group-size fixture -- see
+    # test_split_examples_ratios_stay_within_tolerance_under_group_size_skew
+    # for the realistic-skew case that fixture couldn't exercise).
     examples = _grouped_examples(n_groups=200, seed=seed)
     cfg = DataConfig(train_ratio=0.8, val_ratio=0.1, test_ratio=0.1, seed=seed)
     train, val, test = split_examples(examples, cfg)
     total = len(examples)
 
-    assert abs(len(train) / total - 0.8) <= 0.05
-    assert abs(len(val) / total - 0.1) <= 0.05
-    assert abs(len(test) / total - 0.1) <= 0.05
+    assert abs(len(train) / total - 0.8) <= 0.01
+    assert abs(len(val) / total - 0.1) <= 0.01
+    assert abs(len(test) / total - 0.1) <= 0.01
+
+
+@pytest.mark.parametrize("seed", list(range(1, 11)))
+def test_split_examples_ratios_stay_within_tolerance_under_group_size_skew(seed):
+    # Regression for the largest-first ordering fix: with realistic
+    # heavy-tailed group sizes (mostly singletons, a handful of groups
+    # 60-200 rows), the pre-fix shuffle-order-only heuristic measured a
+    # worst-case deviation of 0.102 across 10 seeds on this exact shape.
+    # After largest-first sorting, measured worst deviation across the same
+    # 10 seeds is 0.0007 -- 0.01 is a tight band the fix actually earns.
+    examples = _heavy_tailed_grouped_examples(seed)
+    cfg = DataConfig(train_ratio=0.8, val_ratio=0.1, test_ratio=0.1, seed=seed)
+    train, val, test = split_examples(examples, cfg)
+    total = len(examples)
+
+    assert abs(len(train) / total - 0.8) <= 0.01
+    assert abs(len(val) / total - 0.1) <= 0.01
+    assert abs(len(test) / total - 0.1) <= 0.01
+
+
+@pytest.mark.parametrize("seed", list(range(1, 11)))
+def test_split_examples_ratios_stay_within_tolerance_with_one_dominant_group(seed):
+    # A second realistic skew shape: mostly singletons plus a single very
+    # large group (300 singletons + one 700-row group -- e.g. a CVE fixed
+    # across 700 changed files/commits). Pre-fix, this measured a worst-case
+    # deviation of 0.192 across 10 seeds (test split at 1.5% or 20% instead
+    # of the 10% target, depending on seed) -- exactly the "can't report a
+    # number off this split" case the review flagged. After largest-first
+    # sorting, measured deviation across the same 10 seeds is 0.000, because
+    # the 300 remaining singletons give the greedy exact fine-grained control
+    # once the one large group is placed.
+    examples = _heavy_tailed_grouped_examples(seed, n_singletons=300, big_sizes=(700,))
+    cfg = DataConfig(train_ratio=0.8, val_ratio=0.1, test_ratio=0.1, seed=seed)
+    train, val, test = split_examples(examples, cfg)
+    total = len(examples)
+
+    assert abs(len(train) / total - 0.8) <= 0.01
+    assert abs(len(val) / total - 0.1) <= 0.01
+    assert abs(len(test) / total - 0.1) <= 0.01
+
+
+def test_split_examples_cannot_balance_a_group_larger_than_a_splits_target():
+    # Honest residual, not a bug: grouping guarantees zero cross-split
+    # leakage (test_split_examples_never_splits_a_group_across_sets), but it
+    # cannot also guarantee exact ratios when a single group is larger than
+    # an entire split's target -- e.g. a 950-of-1000-row CVE must overshoot
+    # whichever split it lands in, since no split can be asked to both take
+    # the whole group and stay near its ~10%/80% target. This is inherent to
+    # splitting at the group level at all, not something largest-first
+    # ordering (or any ordering) can fix -- documented here so it doesn't
+    # read as an unnoticed gap.
+    examples = [
+        FixDiffExample(
+            "CVE-huge",
+            "CWE-0",
+            "n/a",
+            "UNKNOWN",
+            "Python",
+            "https://r",
+            f"h{i}",
+            "x",
+            "in",
+            "out",
+            "",
+        )
+        for i in range(950)
+    ] + [
+        FixDiffExample(
+            f"CVE-s{g}",
+            "CWE-0",
+            "n/a",
+            "UNKNOWN",
+            "Python",
+            "https://r",
+            f"hs{g}",
+            "x",
+            "in",
+            "out",
+            "",
+        )
+        for g in range(50)
+    ]
+    cfg = DataConfig(train_ratio=0.8, val_ratio=0.1, test_ratio=0.1, seed=1)
+    train, val, test = split_examples(examples, cfg)
+
+    # The 950-row group lands wholly in one split (never divided -- the
+    # leakage guarantee still holds)...
+    huge_split_sizes = [len([e for e in s if e.cve_id == "CVE-huge"]) for s in (train, val, test)]
+    assert sorted(huge_split_sizes) == [0, 0, 950]
+    # ...but that split's realized ratio necessarily overshoots its 80%/10%
+    # target by a wide margin -- not within the 0.01 band the tests above
+    # assert for realistic (no single dominant-over-target group) data.
+    total = len(examples)
+    worst = max(
+        abs(len(train) / total - 0.8), abs(len(val) / total - 0.1), abs(len(test) / total - 0.1)
+    )
+    assert worst > 0.1
 
 
 # --- load_raw_dataset (network call itself is mocked out) -----------------

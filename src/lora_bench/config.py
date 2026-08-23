@@ -40,6 +40,15 @@ class DataConfig:
     dataset_name: str = "hitoshura25/cvefixes"
     dataset_split: str = "train"
 
+    # Pinned to a specific commit SHA of the dataset repo (resolved via
+    # HfApi().dataset_info(...).sha on 2026-08-22), not left to follow the
+    # branch head. hitoshura25/cvefixes is a third-party mirror ADR-0002
+    # already flags as able to silently diverge from the CVEfixes source --
+    # without a pin, the inputs behind any reported comparison number could
+    # change under it, which is indefensible for a project whose whole
+    # point is a comparison table. See ADR-0002's amendment.
+    revision: str = "d4f5c4ea65329d9ccbb8a3b3149e5d06eda5edb2"
+
     # Language allowlist. Chosen from a live scan of the source dataset
     # (see ADR.md ADR-0002): these six cover the bulk of non-noise rows
     # (PHP/C dominate, Python/JS/Go/C++/Java each have hundreds+) while

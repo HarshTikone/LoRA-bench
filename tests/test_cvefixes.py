@@ -18,6 +18,7 @@ from lora_bench.data.cvefixes import (
     build_dataset,
     clean_record,
     filter_records,
+    load_raw_dataset,
     normalize_severity,
     parse_cve_description,
     read_jsonl,
@@ -332,6 +333,34 @@ def test_split_examples_deterministic_for_same_seed():
     assert [e.cve_id for e in a[0]] == [e.cve_id for e in b[0]]
     assert [e.cve_id for e in a[1]] == [e.cve_id for e in b[1]]
     assert [e.cve_id for e in a[2]] == [e.cve_id for e in b[2]]
+
+
+# --- load_raw_dataset (network call itself is mocked out) -----------------
+
+
+def test_load_raw_dataset_passes_through_revision(monkeypatch):
+    captured = {}
+
+    def fake_load_dataset(name, split, revision):
+        captured["name"] = name
+        captured["split"] = split
+        captured["revision"] = revision
+        return [{"a": 1}, {"a": 2}]
+
+    monkeypatch.setattr("datasets.load_dataset", fake_load_dataset)
+
+    rows = list(load_raw_dataset("some/dataset", "train", revision="deadbeef123"))
+    assert rows == [{"a": 1}, {"a": 2}]
+    assert captured == {"name": "some/dataset", "split": "train", "revision": "deadbeef123"}
+
+
+def test_default_data_config_pins_a_real_looking_revision():
+    # Guards against "revision: None" (follows branch head, defeating the
+    # point) or an invented placeholder slipping back in.
+    revision = DataConfig().revision
+    assert isinstance(revision, str)
+    assert len(revision) == 40  # a full git commit SHA, not a branch name
+    assert all(c in "0123456789abcdef" for c in revision)
 
 
 # --- write_jsonl / read_jsonl ------------------------------------------------

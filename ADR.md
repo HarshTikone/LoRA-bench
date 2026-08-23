@@ -111,6 +111,20 @@ the original CVEfixes SQL dump on Zenodo.
 from the CVEfixes source, or the Day 2 fine-tune needs more than ~13k
 available rows can supply after filtering.
 
+**Amendment (2026-08-22, Day 1 hardening pass): pin the dataset revision.**
+`load_raw_dataset` originally called `load_dataset(dataset_name,
+split=split)` with no `revision`, so it followed the HF repo's branch
+head — meaning the training data behind any reported comparison number
+could silently change out from under it, which directly contradicts this
+ADR's own "revisit if... found to silently diverge" condition by not even
+detecting a divergence, let alone reacting to one. `DataConfig.revision`
+now defaults to `d4f5c4ea65329d9ccbb8a3b3149e5d06eda5edb2` — the dataset
+repo's actual current commit SHA, resolved via
+`HfApi().dataset_info("hitoshura25/cvefixes").sha` on 2026-08-22, not an
+invented placeholder — and `load_raw_dataset`/`configs/default.yaml`
+thread it through. Revisit if the dataset repo is updated with fixes worth
+pulling in (bump the pin deliberately, don't just drop it).
+
 ## ADR-0003 — Combined character budget instead of raising `max_seq_len`
 
 **Date:** 2026-08-22 (Day 1 hardening pass)

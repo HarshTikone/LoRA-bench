@@ -292,14 +292,18 @@ def read_jsonl(path: str | Path) -> list[FixDiffExample]:
     return examples
 
 
-def load_raw_dataset(dataset_name: str, split: str) -> Iterator[dict]:
+def load_raw_dataset(dataset_name: str, split: str, revision: str | None = None) -> Iterator[dict]:
     """Thin wrapper around datasets.load_dataset — the one network call in
     this module. Isolated here so nothing else in the pipeline imports
     `datasets` or touches the network, keeping the rest unit-testable.
+
+    `revision` should normally be DataConfig.revision (a pinned commit SHA,
+    per ADR-0002) rather than None/a branch name — every comparison this
+    project reports depends on the training data staying reproducible.
     """
     from datasets import load_dataset  # local import: only needed on this path
 
-    ds = load_dataset(dataset_name, split=split)
+    ds = load_dataset(dataset_name, split=split, revision=revision)
     for row in ds:
         yield dict(row)
 
@@ -346,7 +350,9 @@ def main(argv: list[str] | None = None) -> None:
     if args.dry_run:
         raw_records: Iterable[dict] = _load_fixture_records()
     else:
-        raw_records = load_raw_dataset(cfg.data.dataset_name, cfg.data.dataset_split)
+        raw_records = load_raw_dataset(
+            cfg.data.dataset_name, cfg.data.dataset_split, cfg.data.revision
+        )
 
     stats = run_pipeline(cfg, raw_records, args.out_dir)
     print(f"Wrote {stats['total']} examples to {args.out_dir}/ "

@@ -9,6 +9,8 @@
 data:
   dataset_name: hitoshura25/cvefixes
   dataset_split: train
+  # Pinned commit SHA (see ADR-0002's amendment) -- not the branch head.
+  revision: d4f5c4ea65329d9ccbb8a3b3149e5d06eda5edb2
   languages: [Python, C, C++, JavaScript, Java, Go]
   min_chars: 20
   max_chars: 4000

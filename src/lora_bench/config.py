@@ -16,6 +16,22 @@ import yaml
 
 _EPS = 1e-6
 
+# Conservative (i.e. deliberately low) chars-per-token estimate used only to
+# validate that DataConfig.max_combined_chars can't blow ModelConfig.max_seq_len
+# in the worst case. Real source code under a BPE tokenizer typically runs
+# closer to 3.5-4.5 chars/token; using a lower number here means this bound
+# demands MORE token budget than a real tokenizer likely needs, not less --
+# it's a safety margin, not a measurement. scripts/token_budget.py measures
+# the real distribution with the actual training tokenizer; treat that as
+# authoritative over this heuristic once it's been run.
+CHARS_PER_TOKEN_ESTIMATE = 3.0
+
+# Rough pad (in characters) for INSTRUCTION_TEMPLATE's fixed text plus
+# chat-template role markers/special tokens, none of which are counted by
+# max_combined_chars (which only covers the code fields). Not measured --
+# same caveat as CHARS_PER_TOKEN_ESTIMATE above.
+INSTRUCTION_OVERHEAD_CHARS_ESTIMATE = 300
+
 
 @dataclass
 class DataConfig:
@@ -36,9 +52,26 @@ class DataConfig:
     # fixed_code independently. The live scan found empty code fields and at
     # least one ~55MB outlier row, so both bounds are load-bearing, not
     # cosmetic — without max_chars a single row can blow the token/time
-    # budget of a T4 Colab session.
+    # budget of a T4 Colab session. Note that under the *default* config,
+    # max_combined_chars (below) is the actual binding constraint on length
+    # for realistic pairs, since it's tighter than 2x max_chars; max_chars
+    # still matters as an independent per-field ceiling if someone raises
+    # max_combined_chars without revisiting this value. See ADR-0003.
     min_chars: int = 20
     max_chars: int = 4000
+
+    # Cap on vulnerable_code + fixed_code combined, checked *in addition to*
+    # the independent max_chars bound above. max_chars alone doesn't bound
+    # what a training example actually costs in tokens: it's applied per
+    # field, so two fields each just under max_chars can combine into ~2x
+    # that — which is exactly the bug ADR-0003 documents (max_chars=4000
+    # per field vs. model.max_seq_len=1024 tokens: a worst-case pair could
+    # need ~2,400-2,700 tokens, truncating the *output* since tokenizers
+    # truncate from the right, i.e. teaching the model to emit a fix that
+    # stops mid-token). Config.__post_init__ enforces that this value can't
+    # exceed what model.max_seq_len can plausibly hold; see ADR-0003 for why
+    # this field exists instead of raising max_seq_len or halving max_chars.
+    max_combined_chars: int = 2600
 
     # Cap on total examples kept after filtering, so the Day 2 fine-tune has
     # a predictable, bounded run time on a free-tier T4 session. None means
@@ -64,6 +97,12 @@ class DataConfig:
             )
         if self.max_examples is not None and self.max_examples <= 0:
             raise ValueError(f"max_examples must be > 0 or null, got {self.max_examples}")
+        if self.max_combined_chars < 2 * self.min_chars:
+            raise ValueError(
+                f"max_combined_chars ({self.max_combined_chars}) must be >= 2 * min_chars "
+                f"({2 * self.min_chars}) — otherwise no pair of fields could ever pass "
+                "both the per-field min_chars check and the combined-length check."
+            )
         if not self.languages:
             raise ValueError("languages must be a non-empty list")
         ratio_sum = self.train_ratio + self.val_ratio + self.test_ratio
@@ -124,6 +163,32 @@ class Config:
     data: DataConfig = field(default_factory=DataConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     lora: LoRAConfig = field(default_factory=LoRAConfig)
+
+    def __post_init__(self) -> None:
+        """Cross-section invariant: data.max_combined_chars must plausibly
+        fit within model.max_seq_len.
+
+        Neither DataConfig nor ModelConfig alone can validate this (it spans
+        both sections), and nothing did before ADR-0003 — max_chars=4000
+        (applied independently per field) and max_seq_len=1024 shipped
+        together despite a worst-case pair needing roughly 2.5x the token
+        budget. Since a tokenizer truncates from the right, that silently
+        truncated the *output* (the fixed code, i.e. the training label),
+        not just the input.
+        """
+        worst_case_chars = self.data.max_combined_chars + INSTRUCTION_OVERHEAD_CHARS_ESTIMATE
+        worst_case_tokens = worst_case_chars / CHARS_PER_TOKEN_ESTIMATE
+        if worst_case_tokens > self.model.max_seq_len:
+            raise ValueError(
+                f"data.max_combined_chars ({self.data.max_combined_chars}) plus the "
+                f"instruction overhead estimate ({INSTRUCTION_OVERHEAD_CHARS_ESTIMATE} "
+                f"chars) could need ~{worst_case_tokens:.0f} tokens in the worst case "
+                f"(at a conservative {CHARS_PER_TOKEN_ESTIMATE} chars/token), which "
+                f"exceeds model.max_seq_len ({self.model.max_seq_len}). Raise "
+                "max_seq_len, lower data.max_combined_chars, or run "
+                "scripts/token_budget.py for the real measured distribution before "
+                "deciding which. See ADR-0003."
+            )
 
 
 def _build_section(cls: type, raw: dict[str, Any] | None) -> Any:

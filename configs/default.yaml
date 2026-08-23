@@ -12,6 +12,7 @@ data:
   languages: [Python, C, C++, JavaScript, Java, Go]
   min_chars: 20
   max_chars: 4000
+  max_combined_chars: 2600
   max_examples: 3000
   drop_noop_pairs: true
   train_ratio: 0.8

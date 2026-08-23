@@ -49,6 +49,7 @@ class DropReason(str, Enum):
     DISALLOWED_LANGUAGE = "disallowed_language"
     TOO_SHORT = "too_short"
     TOO_LONG = "too_long"
+    COMBINED_TOO_LONG = "combined_too_long"
     NOOP_PAIR = "noop_pair"
     DUPLICATE = "duplicate"
 
@@ -144,6 +145,8 @@ def clean_record(raw: dict, cfg: DataConfig) -> tuple[dict | None, DropReason | 
         return None, DropReason.TOO_SHORT
     if vc_len > cfg.max_chars or fc_len > cfg.max_chars:
         return None, DropReason.TOO_LONG
+    if vc_len + fc_len > cfg.max_combined_chars:
+        return None, DropReason.COMBINED_TOO_LONG
 
     if cfg.drop_noop_pairs and vulnerable_code.strip() == fixed_code.strip():
         return None, DropReason.NOOP_PAIR

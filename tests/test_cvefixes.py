@@ -121,6 +121,23 @@ def test_clean_record_drops_too_long():
     assert clean_record(make_raw(vulnerable_code="a" * 200), cfg) == (None, DropReason.TOO_LONG)
 
 
+def test_clean_record_drops_combined_too_long_even_when_each_field_is_individually_fine():
+    # Regression for the max_chars/max_seq_len mismatch in ADR-0003: two
+    # fields each comfortably under max_chars can still combine into more
+    # code than the model's sequence budget allows.
+    cfg = DataConfig(max_chars=2000, max_combined_chars=3000, min_chars=20)
+    rec = make_raw(vulnerable_code="a" * 1600, fixed_code="b" * 1600)  # each < 2000, sum 3200 > 3000
+    assert clean_record(rec, cfg) == (None, DropReason.COMBINED_TOO_LONG)
+
+
+def test_clean_record_per_field_max_chars_still_binds_independently():
+    # max_combined_chars doesn't replace max_chars -- a single oversized
+    # field is still dropped even if a generous combined budget would allow it.
+    cfg = DataConfig(max_chars=100, max_combined_chars=1_000_000, min_chars=20)
+    rec = make_raw(vulnerable_code="a" * 150, fixed_code="b" * 30)
+    assert clean_record(rec, cfg) == (None, DropReason.TOO_LONG)
+
+
 def test_clean_record_drops_too_short():
     cfg = DataConfig(min_chars=50)
     rec, reason = clean_record(make_raw(vulnerable_code="a" * 10, fixed_code="b" * 10), cfg)

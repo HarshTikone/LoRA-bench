@@ -20,6 +20,7 @@ from lora_bench.data.cvefixes import (
     clean_record,
     filter_records,
     load_raw_dataset,
+    main,
     normalize_severity,
     parse_cve_description,
     read_jsonl,
@@ -435,18 +436,34 @@ def test_split_examples_ratios_stay_within_tolerance(seed):
 
 def test_load_raw_dataset_passes_through_revision(monkeypatch):
     captured = {}
+    fake_rows = [make_raw(cve_id="CVE-A"), make_raw(cve_id="CVE-B")]
 
     def fake_load_dataset(name, split, revision):
         captured["name"] = name
         captured["split"] = split
         captured["revision"] = revision
-        return [{"a": 1}, {"a": 2}]
+        return fake_rows
 
     monkeypatch.setattr("datasets.load_dataset", fake_load_dataset)
 
     rows = list(load_raw_dataset("some/dataset", "train", revision="deadbeef123"))
-    assert rows == [{"a": 1}, {"a": 2}]
+    assert rows == fake_rows
     assert captured == {"name": "some/dataset", "split": "train", "revision": "deadbeef123"}
+
+
+def test_load_raw_dataset_raises_on_missing_schema_column(monkeypatch):
+    bad_row = make_raw()
+    del bad_row["vulnerable_code"]  # simulate an upstream column rename/removal
+
+    monkeypatch.setattr("datasets.load_dataset", lambda name, split, revision: [bad_row])
+
+    with pytest.raises(ValueError, match="vulnerable_code"):
+        list(load_raw_dataset("some/dataset", "train"))
+
+
+def test_load_raw_dataset_empty_source_yields_nothing(monkeypatch):
+    monkeypatch.setattr("datasets.load_dataset", lambda name, split, revision: [])
+    assert list(load_raw_dataset("some/dataset", "train")) == []
 
 
 def test_default_data_config_pins_a_real_looking_revision():
@@ -456,6 +473,26 @@ def test_default_data_config_pins_a_real_looking_revision():
     assert isinstance(revision, str)
     assert len(revision) == 40  # a full git commit SHA, not a branch name
     assert all(c in "0123456789abcdef" for c in revision)
+
+
+# --- main() / CLI -----------------------------------------------------------
+
+
+def test_main_dry_run_succeeds_and_returns_zero(tmp_path):
+    exit_code = main(["--dry-run", "--out-dir", str(tmp_path)])
+    assert exit_code == 0
+    assert (tmp_path / "train.jsonl").exists()
+
+
+def test_main_returns_nonzero_below_min_examples(tmp_path, capsys):
+    # The fixture yields exactly 10 examples under default filtering (see
+    # test_filter_records_against_fixture_default_config) -- 11 is
+    # unreachable, so this exercises the floor without also tripping
+    # split_examples' separate empty-split guard (which fires first on a
+    # truly empty result and would raise instead of returning cleanly).
+    exit_code = main(["--dry-run", "--min-examples", "11", "--out-dir", str(tmp_path)])
+    assert exit_code == 1
+    assert "ERROR" in capsys.readouterr().err
 
 
 # --- write_jsonl / read_jsonl ------------------------------------------------

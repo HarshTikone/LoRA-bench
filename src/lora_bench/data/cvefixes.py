@@ -23,6 +23,7 @@ import argparse
 import ast
 import json
 import random
+import sys
 from collections import Counter
 from collections.abc import Iterable, Iterator
 from enum import Enum
@@ -30,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from lora_bench.config import Config, DataConfig, load_config
-from lora_bench.data.schema import FixDiffExample
+from lora_bench.data.schema import RAW_FIELDS, FixDiffExample
 
 KNOWN_SEVERITIES = {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
 
@@ -335,6 +336,28 @@ def read_jsonl(path: str | Path) -> list[FixDiffExample]:
     return examples
 
 
+def _validate_raw_schema(row: dict) -> None:
+    """Raise loudly if a raw row is missing a column clean_record depends on.
+
+    RAW_FIELDS documented this contract from Day 1, but nothing enforced
+    it: clean_record reads everything via .get(), so an upstream column
+    rename would silently drop every row, filter_records/run_pipeline would
+    write three empty JSONL files, and main() would print "Wrote 0
+    examples" and exit 0. Checked against the first row only (cheap, and
+    the source is a single Parquet-backed table with a uniform schema, not
+    a place where different rows have different columns).
+    """
+    missing = [f for f in RAW_FIELDS if f not in row]
+    if missing:
+        raise ValueError(
+            f"Raw dataset row is missing expected column(s): {missing}. "
+            f"clean_record() depends on all of RAW_FIELDS: {RAW_FIELDS}. "
+            "This usually means the upstream dataset schema changed -- "
+            "update RAW_FIELDS/clean_record to match before proceeding, "
+            "rather than silently dropping every row."
+        )
+
+
 def load_raw_dataset(dataset_name: str, split: str, revision: str | None = None) -> Iterator[dict]:
     """Thin wrapper around datasets.load_dataset — the one network call in
     this module. Isolated here so nothing else in the pipeline imports
@@ -343,11 +366,21 @@ def load_raw_dataset(dataset_name: str, split: str, revision: str | None = None)
     `revision` should normally be DataConfig.revision (a pinned commit SHA,
     per ADR-0002) rather than None/a branch name — every comparison this
     project reports depends on the training data staying reproducible.
+
+    Validates the first row's schema against RAW_FIELDS before yielding
+    anything — see _validate_raw_schema.
     """
     from datasets import load_dataset  # local import: only needed on this path
 
     ds = load_dataset(dataset_name, split=split, revision=revision)
-    for row in ds:
+    rows = iter(ds)
+    try:
+        first = dict(next(rows))
+    except StopIteration:
+        return
+    _validate_raw_schema(first)
+    yield first
+    for row in rows:
         yield dict(row)
 
 
@@ -374,7 +407,11 @@ def run_pipeline(cfg: Config, raw_records: Iterable[dict], out_dir: str | Path) 
     }
 
 
-def main(argv: list[str] | None = None) -> None:
+def main(argv: list[str] | None = None) -> int:
+    """Returns an exit code (0 success, 1 failure) rather than calling
+    sys.exit() directly, so tests can call main(argv) and check the return
+    value instead of catching SystemExit.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="configs/default.yaml", help="Path to YAML config.")
     parser.add_argument(
@@ -385,6 +422,14 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Use the bundled tests/fixtures sample instead of the live HF Hub "
         "(no network) to smoke-test the pipeline wiring.",
+    )
+    parser.add_argument(
+        "--min-examples",
+        type=int,
+        default=1,
+        help="Exit non-zero if fewer than this many examples survive filtering "
+        "(default 1: catch a silent zero-yield run, e.g. from an upstream "
+        "schema or language-distribution shift, instead of exiting 0).",
     )
     args = parser.parse_args(argv)
 
@@ -405,6 +450,17 @@ def main(argv: list[str] | None = None) -> None:
         for reason, count in sorted(stats["drop_counts"].items(), key=lambda kv: -kv[1]):
             print(f"  {reason}: {count}")
 
+    if stats["total"] < args.min_examples:
+        print(
+            f"ERROR: only {stats['total']} example(s) survived filtering, below "
+            f"--min-examples={args.min_examples}. Treating this as a failed run "
+            "rather than exiting 0 on an effectively empty dataset.",
+            file=sys.stderr,
+        )
+        return 1
+
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

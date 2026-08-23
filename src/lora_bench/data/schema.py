@@ -5,8 +5,9 @@ Two shapes matter here:
 - The *raw* record: whatever `datasets.load_dataset("hitoshura25/cvefixes")`
   hands back per row. It's a plain dict; we don't wrap it in a class because
   it's untrusted/messy input (see cvefixes.clean_record) and we only read a
-  fixed subset of its fields. RAW_FIELDS documents that subset so a schema
-  change upstream fails loudly instead of silently dropping columns.
+  fixed subset of its fields. RAW_FIELDS documents that subset, and
+  cvefixes.load_raw_dataset validates the first row against it, so a schema
+  change upstream raises immediately instead of silently dropping every row.
 - FixDiffExample: the cleaned, instruction-tuning-ready record this
   pipeline produces, and what Day 2's fine-tuning step consumes.
 """

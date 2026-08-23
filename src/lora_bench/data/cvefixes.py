@@ -6,7 +6,8 @@ tests/fixtures/sample_raw_records.json, which mirror the real schema
 confirmed by streaming live rows on 2026-08-22):
 
     load_raw_dataset  -> raw dict per row (network; not unit tested)
-    filter_records    -> clean_record() over each row, dedup, optional cap
+    filter_records    -> clean_record() over each row, dedup, optional cap;
+                         also returns a Counter of why rows were dropped
     build_dataset     -> filter_records() + to_example() -> FixDiffExample
     split_examples    -> deterministic seeded train/val/test split
     write_jsonl / read_jsonl
@@ -22,7 +23,9 @@ import argparse
 import ast
 import json
 import random
+from collections import Counter
 from collections.abc import Iterable, Iterator
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +33,24 @@ from lora_bench.config import Config, DataConfig, load_config
 from lora_bench.data.schema import FixDiffExample
 
 KNOWN_SEVERITIES = {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
+
+
+class DropReason(str, Enum):
+    """Why filter_records dropped a row.
+
+    Values are Counter keys and get printed in the pipeline summary and
+    written into the manifest, so they're deliberately stable, lowercase,
+    machine-parseable strings rather than free-text.
+    """
+
+    INVALID_FIELD_TYPE = "invalid_field_type"
+    MISSING_IDENTIFIER = "missing_identifier"
+    EMPTY_CODE = "empty_code"
+    DISALLOWED_LANGUAGE = "disallowed_language"
+    TOO_SHORT = "too_short"
+    TOO_LONG = "too_long"
+    NOOP_PAIR = "noop_pair"
+    DUPLICATE = "duplicate"
 
 INSTRUCTION_TEMPLATE = (
     "The following {language} code contains a known security vulnerability "
@@ -82,70 +103,107 @@ def normalize_severity(raw: Any) -> str:
     return s if s in KNOWN_SEVERITIES else "UNKNOWN"
 
 
-def clean_record(raw: dict, cfg: DataConfig) -> dict | None:
-    """Validate + normalize one raw row. Returns None if it should be dropped.
+def clean_record(raw: dict, cfg: DataConfig) -> tuple[dict | None, DropReason | None]:
+    """Validate + normalize one raw row.
 
-    Drop reasons, in the order checked: missing required identifiers, empty
-    code fields, language not in the allowlist, either code field outside
-    [min_chars, max_chars], or (if cfg.drop_noop_pairs) vulnerable_code and
-    fixed_code identical after stripping whitespace.
+    Returns (cleaned_record, None) on success, or (None, DropReason) if the
+    row should be dropped. Every field this function keys/branches on is
+    checked for *type*, not just truthiness: a non-string value in a
+    string-shaped field (e.g. a stray float from an upstream column that
+    wasn't stringified the way `severity` sometimes arrives as the literal
+    string "nan") is dropped, not coerced — silently `str()`-ing a float
+    into a code field would train on garbage, not fix a formatting quirk.
+    Purely descriptive fields (cwe_id/cwe_name/diff) are coerced with
+    `str()` instead of dropped, since they're metadata for readability, not
+    training-critical content or join keys.
     """
     cve_id = raw.get("cve_id")
-    vulnerable_code = raw.get("vulnerable_code") or ""
-    fixed_code = raw.get("fixed_code") or ""
-    language = raw.get("language")
     commit_hash = raw.get("hash")
     repo_url = raw.get("repo_url")
+    language = raw.get("language")
+    vulnerable_code = raw.get("vulnerable_code")
+    fixed_code = raw.get("fixed_code")
+
+    for value in (cve_id, commit_hash, repo_url, language, vulnerable_code, fixed_code):
+        if value is not None and not isinstance(value, str):
+            return None, DropReason.INVALID_FIELD_TYPE
 
     if not cve_id or not commit_hash or not repo_url:
-        return None
+        return None, DropReason.MISSING_IDENTIFIER
+
+    vulnerable_code = vulnerable_code or ""
+    fixed_code = fixed_code or ""
     if not vulnerable_code.strip() or not fixed_code.strip():
-        return None
+        return None, DropReason.EMPTY_CODE
+
     if language not in cfg.languages:
-        return None
+        return None, DropReason.DISALLOWED_LANGUAGE
 
     vc_len, fc_len = len(vulnerable_code), len(fixed_code)
-    if not (cfg.min_chars <= vc_len <= cfg.max_chars):
-        return None
-    if not (cfg.min_chars <= fc_len <= cfg.max_chars):
-        return None
+    if vc_len < cfg.min_chars or fc_len < cfg.min_chars:
+        return None, DropReason.TOO_SHORT
+    if vc_len > cfg.max_chars or fc_len > cfg.max_chars:
+        return None, DropReason.TOO_LONG
 
     if cfg.drop_noop_pairs and vulnerable_code.strip() == fixed_code.strip():
-        return None
+        return None, DropReason.NOOP_PAIR
 
-    return {
-        "cve_id": cve_id,
-        "cwe_id": raw.get("cwe_id") or "UNKNOWN",
-        "cwe_name": raw.get("cwe_name") or "unspecified weakness",
-        "severity": normalize_severity(raw.get("severity")),
-        "language": language,
-        "repo_url": repo_url,
-        "commit_hash": commit_hash,
-        "vulnerable_code": vulnerable_code,
-        "fixed_code": fixed_code,
-        "diff": raw.get("diff_with_context") or "",
-        "cve_description": parse_cve_description(raw.get("cve_description")),
-    }
+    cwe_id = raw.get("cwe_id")
+    cwe_name = raw.get("cwe_name")
+    diff = raw.get("diff_with_context")
+
+    return (
+        {
+            "cve_id": cve_id,
+            "cwe_id": str(cwe_id) if cwe_id else "UNKNOWN",
+            "cwe_name": str(cwe_name) if cwe_name else "unspecified weakness",
+            "severity": normalize_severity(raw.get("severity")),
+            "language": language,
+            "repo_url": repo_url,
+            "commit_hash": commit_hash,
+            "vulnerable_code": vulnerable_code,
+            "fixed_code": fixed_code,
+            "diff": str(diff) if diff else "",
+            "cve_description": parse_cve_description(raw.get("cve_description")),
+        },
+        None,
+    )
 
 
-def filter_records(raw_records: Iterable[dict], cfg: DataConfig) -> list[dict]:
+def filter_records(
+    raw_records: Iterable[dict], cfg: DataConfig
+) -> tuple[list[dict], Counter]:
     """clean_record() over every row, then dedup and (optionally) cap.
+
+    Returns the cleaned/deduped/capped records alongside a Counter of why
+    every *dropped* row was dropped (DropReason.value -> count). Without
+    this, a silent upstream shift (e.g. a schema change that fails 90% of
+    rows) would just produce a smaller output file with no signal that
+    anything went wrong — see run_pipeline/main, which surface this Counter.
 
     Dedup key is (commit_hash, repo_url, cve_id): the same fix commit can
     appear more than once if the source dataset has one row per changed
     file. Capping samples uniformly at random (seeded) from the full
     filtered set rather than taking the first N, since source rows are
     grouped by repo and truncating in dataset order would skew the kept
-    examples toward whichever repos happen to sort first.
+    examples toward whichever repos happen to sort first. Rows dropped by
+    this cap are deliberately NOT added to the returned Counter — sampling
+    down to a size budget is an intentional choice, not a data-quality
+    problem, and mixing the two would make drop-reason counts depend on
+    max_examples in a confusing way.
     """
+    drop_counts: Counter = Counter()
     seen: set[tuple[str, str, str]] = set()
     cleaned: list[dict] = []
     for raw in raw_records:
-        rec = clean_record(raw, cfg)
+        rec, reason = clean_record(raw, cfg)
         if rec is None:
+            assert reason is not None
+            drop_counts[reason.value] += 1
             continue
         key = (rec["commit_hash"], rec["repo_url"], rec["cve_id"])
         if key in seen:
+            drop_counts[DropReason.DUPLICATE.value] += 1
             continue
         seen.add(key)
         cleaned.append(rec)
@@ -153,7 +211,7 @@ def filter_records(raw_records: Iterable[dict], cfg: DataConfig) -> list[dict]:
     if cfg.max_examples is not None and len(cleaned) > cfg.max_examples:
         cleaned = random.Random(cfg.seed).sample(cleaned, cfg.max_examples)
 
-    return cleaned
+    return cleaned, drop_counts
 
 
 def to_example(rec: dict) -> FixDiffExample:
@@ -179,8 +237,11 @@ def to_example(rec: dict) -> FixDiffExample:
     )
 
 
-def build_dataset(raw_records: Iterable[dict], cfg: DataConfig) -> list[FixDiffExample]:
-    return [to_example(rec) for rec in filter_records(raw_records, cfg)]
+def build_dataset(
+    raw_records: Iterable[dict], cfg: DataConfig
+) -> tuple[list[FixDiffExample], Counter]:
+    cleaned, drop_counts = filter_records(raw_records, cfg)
+    return [to_example(rec) for rec in cleaned], drop_counts
 
 
 def split_examples(
@@ -245,8 +306,8 @@ def _load_fixture_records() -> list[dict]:
         return json.load(f)
 
 
-def run_pipeline(cfg: Config, raw_records: Iterable[dict], out_dir: str | Path) -> dict[str, int]:
-    examples = build_dataset(raw_records, cfg.data)
+def run_pipeline(cfg: Config, raw_records: Iterable[dict], out_dir: str | Path) -> dict[str, Any]:
+    examples, drop_counts = build_dataset(raw_records, cfg.data)
     train, val, test = split_examples(examples, cfg.data)
 
     out_dir = Path(out_dir)
@@ -254,7 +315,13 @@ def run_pipeline(cfg: Config, raw_records: Iterable[dict], out_dir: str | Path) 
     write_jsonl(val, out_dir / "val.jsonl")
     write_jsonl(test, out_dir / "test.jsonl")
 
-    return {"total": len(examples), "train": len(train), "val": len(val), "test": len(test)}
+    return {
+        "total": len(examples),
+        "train": len(train),
+        "val": len(val),
+        "test": len(test),
+        "drop_counts": dict(drop_counts),
+    }
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -281,6 +348,10 @@ def main(argv: list[str] | None = None) -> None:
     stats = run_pipeline(cfg, raw_records, args.out_dir)
     print(f"Wrote {stats['total']} examples to {args.out_dir}/ "
           f"(train={stats['train']}, val={stats['val']}, test={stats['test']})")
+    if stats["drop_counts"]:
+        print("Dropped rows by reason:")
+        for reason, count in sorted(stats["drop_counts"].items(), key=lambda kv: -kv[1]):
+            print(f"  {reason}: {count}")
 
 
 if __name__ == "__main__":

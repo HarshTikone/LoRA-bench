@@ -74,18 +74,16 @@ the original CVEfixes SQL dump on Zenodo.
   fix-commit rows for research/fine-tuning purposes.
 
 **Data-quality findings that directly shaped `DataConfig` defaults**
-(from streaming and scanning ~3,000 live rows on 2026-08-22; reproduce with
-`python scripts/scan_dataset.py --limit 3000` — see also
-`src/lora_bench/config.py` and `configs/default.yaml`):
+(qualitative findings from an initial ad-hoc scan of ~3,000 live rows on
+2026-08-22; reproduce with `python scripts/scan_dataset.py --limit 3000` —
+see also `src/lora_bench/config.py` and `configs/default.yaml`):
 - `severity` is frequently the literal string `"nan"` rather than missing —
   normalized to `"UNKNOWN"` (`normalize_severity`), not left as a stray
   string a downstream branch could mis-handle.
-- ~7% of scanned rows have `vulnerable_code == fixed_code` (no-op diffs,
-  e.g. doc-only commits swept in by the source mining) — dropped by
-  default (`drop_noop_pairs=True`); they teach the model nothing about
-  fixing anything.
 - A meaningful fraction of rows have an empty `vulnerable_code` or
-  `fixed_code` — dropped (`clean_record`).
+  `fixed_code`, or `vulnerable_code == fixed_code` (a no-op diff, e.g. a
+  doc-only commit swept in by the source mining) — both dropped
+  (`clean_record`, `drop_noop_pairs=True`).
 - At least one row's code field is ~55MB — `max_chars` (default 4000) is
   load-bearing, not cosmetic; without it, a single row can dominate a T4
   session's token/time budget.
@@ -94,6 +92,35 @@ the original CVEfixes SQL dump on Zenodo.
   "Unknown"/"JSON"/"Markdown" buckets that aren't really source code. The
   default `languages` allowlist (`Python, C, C++, JavaScript, Java, Go`)
   keeps the latter out while covering most of the signal.
+
+**Exact drop-reason breakdown (Day 1 hardening pass, 2026-08-22)** — after
+`scripts/scan_dataset.py` was rewritten to call the pipeline's own
+`clean_record`/`filter_records` instead of keeping its own inline copy of
+those checks, a fresh 3,000-row scan through the *current* filtering
+pipeline (including `max_combined_chars` from ADR-0003) measured:
+
+```
+scanned: 3000
+kept by current DataConfig defaults: 746 (24.9%)
+dropped by reason:
+  disallowed_language: 1240 (41.3%)
+  empty_code: 622 (20.7%)
+  too_long: 187 (6.2%)
+  combined_too_long: 154 (5.1%)
+  too_short: 22 (0.7%)
+  duplicate: 20 (0.7%)
+  noop_pair: 9 (0.3%)
+```
+
+Note this isn't directly comparable to the informal "~7% no-op" figure an
+earlier (pre-pipeline, ad-hoc) version of this scan reported: that number
+measured no-op pairs across *all* scanned rows independently, while this
+one measures them *after* a row has already survived every earlier check
+in `clean_record`'s sequence (identifiers present, code non-empty,
+language allowed, length bounds) — a conditional, not marginal, rate.
+Funnel effects like this are exactly why this script was rewritten to call
+the pipeline's real `clean_record`/`filter_records` instead of keeping its
+own copy of the checks: the two had already silently diverged once.
 
 **Alternatives considered:**
 - *Raw CVEfixes Zenodo SQL dump* — the authoritative source, and the

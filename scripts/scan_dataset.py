@@ -1,9 +1,16 @@
-"""One-off diagnostic: reproduce the hitoshura25/cvefixes data-quality
-findings that ADR.md's ADR-0002 cites when justifying DataConfig's
-filtering defaults (max_chars, drop_noop_pairs, the language allowlist).
+"""One-off diagnostic: run the pipeline's OWN filter_records over a live
+sample of hitoshura25/cvefixes and report the drop-reason breakdown plus a
+few descriptive stats (language/severity distribution, max code length
+seen) that ADR-0002 cites to justify DataConfig's filtering defaults.
+
+Calls clean_record/filter_records directly rather than re-implementing
+the empty-code/no-op-pair/etc. checks inline, so this script and the
+pipeline can't silently disagree about what counts as a "drop" -- an
+earlier version of this script had its own inline copy of those checks,
+which would have gone stale the moment clean_record's logic changed.
 
 Needs live network access to the Hugging Face Hub, so it is deliberately
-NOT part of the pytest suite and NOT imported by the pipeline — run it
+NOT part of the pytest suite and NOT imported by the pipeline -- run it
 manually to reproduce or refresh the numbers behind ADR-0002.
 
 Usage:
@@ -14,51 +21,54 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from itertools import islice
 
 from datasets import load_dataset
 
+from lora_bench.config import DataConfig
+from lora_bench.data.cvefixes import filter_records
 
-def scan(dataset_name: str, split: str, limit: int) -> None:
-    ds = load_dataset(dataset_name, split=split, streaming=True)
 
-    lang_counter: Counter[str] = Counter()
-    severity_counter: Counter[str] = Counter()
-    n = noop = empty_vulnerable = empty_fixed = 0
-    max_len_seen = 0
+def scan(dataset_name: str, split: str, revision: str | None, limit: int) -> None:
+    ds = load_dataset(dataset_name, split=split, revision=revision, streaming=True)
+    raw_records = list(islice(ds, max(limit, 0)))
+    n = len(raw_records)
 
-    for rec in ds:
-        n += 1
-        lang_counter[rec.get("language")] += 1
-        severity_counter[str(rec.get("severity"))] += 1
+    if n == 0:
+        print("No rows scanned (empty stream or --limit 0) -- nothing to report.")
+        return
 
-        vulnerable_code = rec.get("vulnerable_code") or ""
-        fixed_code = rec.get("fixed_code") or ""
-        if vulnerable_code.strip() == fixed_code.strip():
-            noop += 1
-        if not vulnerable_code.strip():
-            empty_vulnerable += 1
-        if not fixed_code.strip():
-            empty_fixed += 1
-        max_len_seen = max(max_len_seen, len(vulnerable_code), len(fixed_code))
+    lang_counter = Counter(str(r.get("language")) for r in raw_records)
+    severity_counter = Counter(str(r.get("severity")) for r in raw_records)
+    max_len_seen = max(
+        max(len(r.get("vulnerable_code") or ""), len(r.get("fixed_code") or ""))
+        for r in raw_records
+    )
 
-        if n >= limit:
-            break
+    cfg = DataConfig()  # the pipeline's actual current defaults, not a copy of them
+    cleaned, drop_counts = filter_records(raw_records, cfg)
 
     print(f"scanned: {n}")
     print(f"top languages: {lang_counter.most_common(15)}")
     print(f"severity values: {severity_counter.most_common(10)}")
-    print(f"noop (vulnerable_code == fixed_code): {noop} ({noop / n:.1%})")
-    print(f"empty vulnerable_code: {empty_vulnerable}  empty fixed_code: {empty_fixed}")
     print(f"max code length seen (chars): {max_len_seen}")
+    print(f"kept by current DataConfig defaults: {len(cleaned)} ({len(cleaned) / n:.1%})")
+    print("dropped by reason:")
+    for reason, count in sorted(drop_counts.items(), key=lambda kv: -kv[1]):
+        print(f"  {reason}: {count} ({count / n:.1%})")
 
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", default="hitoshura25/cvefixes")
     parser.add_argument("--split", default="train")
+    parser.add_argument(
+        "--revision", default=None, help="Defaults to None (branch head) for this diagnostic; "
+        "the pipeline itself pins DataConfig.revision (see ADR-0002)."
+    )
     parser.add_argument("--limit", type=int, default=3000)
     args = parser.parse_args(argv)
-    scan(args.dataset, args.split, args.limit)
+    scan(args.dataset, args.split, args.revision, args.limit)
 
 
 if __name__ == "__main__":

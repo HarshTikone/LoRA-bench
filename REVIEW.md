@@ -1,325 +1,265 @@
-# Review — Day 1 hardening pass (98b0388..53af83d) — 2026-08-22
+# Review — Day 1 second hardening pass (53af83d..HEAD) — 2026-08-23
 
-Scope reviewed: the Day 1 hardening pass — 15 commits (`3073923`..`53af83d`,
-range `98b0388..53af83d`) applied after a first self-review (recorded
-previously in this file) closed Day 1 with "no blocking items," and a
-separate, deeper review then found real defects that first pass missed.
-This review overwrites that earlier Day 1 review per this agent's standing
-instruction that `REVIEW.md` reflects only the latest review, not a running
-log — see the note at the end of this file for what that supersession
-means concretely here.
+Scope reviewed: 8 commits, `343d0c6` through the current `HEAD`
+(`2492523`), range `53af83d..HEAD`. This is the second hardening pass on
+Day 1's data-prep pipeline. Pass 1 (self-review) closed Day 1 clean but
+missed a crash bug and a data-corruption bug. Pass 2 (deeper review)
+caught those plus 11 more; a first hardening pass fixed all 13, plus one
+questionable item found during that review and fixed immediately in
+`343d0c6`. Pass 3 (an even deeper review) then found 5 issues in that
+first hardening pass's own new code/docs — including one claimed-blocking
+defect — plus one piece of repo housekeeping. This review independently
+verifies the second hardening pass that claims to fix all of those.
 
-All 13 claimed fixes were checked against the actual diff (`git show
-<sha> -p` per commit), not just the hardening-pass summary. Two of the
-highest-severity claims (crash bug, data-corruption bug) plus the
-group-aware split were read line-by-line; the remainder were verified by
-reading the real diff and, where behavior was non-obvious, exercising it
-directly.
+All 6 claimed fixes were checked against the actual diff (`git show <sha>
+-p`), not the round's own summary. Item 1 (the blocking-severity
+group-size-skew fix) was read line-by-line, independently re-derived with
+a standalone script against both the fixed and reconstructed pre-fix
+`split_examples`, and cross-checked against the shipped tests. Item 2
+(ADR-0003 causal correction) was checked for internal consistency across
+every file the old "conservative" framing touched. Item 6 (`.gitignore`
+housekeeping) was checked empirically, not just read — confirmed the
+files actually show as ignored and confirmed ruff's behavior differs with
+and without the ignore rule.
 
 ## Passed
 
-- **Claim 1 — `clean_record` crash fixed (`3073923`).** Confirmed:
-  `clean_record` (`src/lora_bench/data/cvefixes.py:116-182`) now
-  type-checks every identifier/language/code field and returns
-  `DropReason.INVALID_FIELD_TYPE` instead of calling `.strip()`/`.lower()`
-  on a non-string value; descriptive-only fields (`cwe_id`, `cwe_name`,
-  `diff_with_context`) are coerced with `str()` instead, matching the
-  stated rationale (coercing a float into a code field would train on
-  garbage). `test_clean_record_drops_non_string_typed_fields_instead_of_crashing`
-  (`tests/test_cvefixes.py`) is parametrized over 5 bad-type values x 6
-  fields (30 cases) and reproduces the pre-fix crash inputs directly.
-  `filter_records`/`build_dataset`/`run_pipeline` now thread a
-  `Counter[DropReason]` end to end into `main()`'s printed summary — real
-  logic change, not just a signature change (verified the counter
-  excludes cap-driven drops, per `test_filter_records_cap_does_not_inflate_drop_counts`).
+- **Item 1 (BLOCKING per pass 3) — `split_examples` largest-first sort
+  (`02fc4af`).** Confirmed the fix is real: `cvefixes.py:299-306` now
+  stable-sorts `group_ids` descending by size (`group_ids.sort(key=lambda
+  gid: -len(groups[gid]))`) immediately after the seeded shuffle and
+  before the greedy assignment loop — exactly the claimed
+  longest-processing-time-first bin-packing order, applied before, not
+  after, the per-group `max(split_order, key=...)` assignment.
 
-- **Claim 2 — combined character budget vs. `max_seq_len` (`4d28bf8`).**
-  Confirmed: `DataConfig.max_combined_chars` (default 2600, checked in
-  `clean_record` at `cvefixes.py:157` alongside the existing per-field
-  `max_chars`) plus a new `Config.__post_init__` cross-section validator
-  (`src/lora_bench/config.py:174-198`) that rejects any config where
-  `max_combined_chars` + a documented instruction-overhead estimate,
-  divided by a documented chars/token estimate, exceeds `max_seq_len`.
-  Verified this validator actually fires on real config construction, not
-  just in isolation: `load_config` (`config.py:210-229`) builds each
-  section then calls `Config(data=..., model=..., lora=...)`, which
-  invokes `__post_init__` — confirmed by `test_default_config_satisfies_its_own_token_budget`
-  passing and `test_config_rejects_combined_chars_that_cannot_fit_seq_len`
-  raising. ADR-0003 documents real measured numbers from
-  `scripts/token_budget.py` (7.5% -> 0.2% truncation-risk rate,
-  ~1,412 -> ~448 avg chars lost) and is honest about the estimate's
-  limitations (conservative chars/token constant, not a hard guarantee,
-  explicitly flags a residual 0.2% as a Day-2 follow-up rather than
-  claiming full closure).
+  Independently re-derived the numbers rather than trusting the commit
+  message. Using the exact shipped `_heavy_tailed_grouped_examples`
+  fixture against the **current** `split_examples`, 10 seeds each:
+  worst deviation 0.0007 (6 groups of 60-200 rows) and 0.0000 (1 dominant
+  700-row group) — matches the ADR/commit-message post-fix numbers
+  exactly. Then reconstructed the **pre-fix** function (identical except
+  omitting the sort line) and ran the same fixture through it: worst
+  deviation 0.0837 and 0.1920 respectively. The dominant-group number
+  (0.1920) matches the claimed 0.192 exactly; the six-groups number
+  (0.0837 vs. the claimed 0.102) is in the same order of magnitude and
+  supports the same qualitative conclusion (severe, seed-dependent skew
+  pre-fix, ~0 post-fix) but isn't bit-identical — plausibly because the
+  "before" figures came from an ephemeral, non-committed verification
+  script during development rather than the exact fixture that ended up
+  shipped. This is a minor precision gap in the prose, not a
+  misrepresentation: the direction, order of magnitude, and the fully
+  reproducible post-fix numbers all check out. See Questionable below.
 
-- **Claim 3 — dataset revision pinned (`32c55be`).** Confirmed:
-  `DataConfig.revision` defaults to a real 40-hex-char SHA
-  (`d4f5c4ea65329d9ccbb8a3b3149e5d06eda5edb2`), threaded through
-  `load_raw_dataset(dataset_name, split, revision)` into
-  `datasets.load_dataset(..., revision=revision)`, and into
-  `configs/default.yaml`. `test_default_data_config_pins_a_real_looking_revision`
-  checks it's a genuine 40-char hex string, guarding against a
-  reintroduced `None`/placeholder. `scripts/scan_dataset.py` deliberately
-  keeps its own `--revision` default of `None` (branch head) — documented
-  in its `--help` text as intentional for a diagnostic tool, distinct from
-  the pipeline's pinned default.
+  Checked the new tests actually would have caught the old bug, not just
+  assumed it: ran the shipped
+  `test_split_examples_ratios_stay_within_tolerance_under_group_size_skew`
+  and `..._with_one_dominant_group` fixtures against the reconstructed
+  pre-fix logic — both fail hard against the pre-fix code (0.0837 and
+  0.1920 vs. an asserted 0.01 band) and pass against the current code.
+  `_grouped_examples` (max size 3) genuinely could not have caught this;
+  confirmed by inspection that its size range is `sizes = [1,1,1,1,2,2,3]`
+  cyclic, nowhere near a target-busting size at the tested scale.
 
-- **Claim 4 — group-aware train/val/test split by `cve_id` (`8e5d8f9`,
-  `17e85ea`).** Confirmed: `split_examples` (`cvefixes.py:256-314`) now
-  groups examples by `cve_id`, shuffles group order by seed, and assigns
-  each group wholly via a largest-remaining-need greedy heuristic —
-  verified no group is ever split across sets
-  (`test_split_examples_never_splits_a_group_across_sets`) and ratios stay
-  within a measured tolerance across 5 seeds. I additionally reasoned
-  through and confirmed (not just trusted the test) that the zero-ratio
-  case is correct by construction, not by luck: whenever a split's
-  configured ratio is 0, the invariant `train_diff + val_diff =
-  (train_target + val_target) - (train_count + val_count) >= 0` (given
-  ratios sum to 1) guarantees at least one of the two positive-ratio
-  splits always has a non-negative remaining-need at every assignment
-  step, so the zero-ratio split's diff of exactly 0 never wins the
-  tie-broken `max()` — `test_split_examples_allows_empty_split_when_its_ratio_is_zero`
-  passes for a structural reason, not coincidentally.
+  Checked the leakage-guarantee test
+  (`test_split_examples_never_splits_a_group_across_sets`,
+  `tests/test_cvefixes.py:70-72` in the current file) really is untouched:
+  `git diff 53af83d..HEAD -- tests/test_cvefixes.py` shows only unchanged
+  context lines around it, no `+`/`-` inside the function body.
 
-- **Claim 5 — CVE ID dropped from the training prompt (`f4f5ee8`).**
-  Confirmed: `INSTRUCTION_TEMPLATE` (`cvefixes.py:67-71`) no longer
-  contains `{cve_id}`; `to_example` (`cvefixes.py:227-233`) no longer
-  passes it in. `cve_id` remains a `FixDiffExample` field (used by the
-  group-aware split and left available for failure-case analysis).
-  `test_to_example_builds_instruction_and_fields` explicitly asserts
-  `"CVE-1-1" not in ex.instruction`. ADR-0005's rationale (memorization
-  risk vs. CWE as a coarse, non-memorizable, realistic signal) is
-  substantive, not just asserted.
+  Checked the residual-honesty test
+  (`test_split_examples_cannot_balance_a_group_larger_than_a_splits_target`)
+  is meaningful, not decorative: it builds a 950-row dominant group + 50
+  singletons, then actually asserts (not just prints) `sorted(
+  huge_split_sizes) == [0, 0, 950]` (the group lands wholly in one split —
+  leakage guarantee holds) and `worst > 0.1` (that split's ratio blows
+  through the tolerance band). Both assertions are load-bearing and would
+  fail if the leakage guarantee broke or if the residual were somehow
+  papered over. This test documents an inherent limit of group-level
+  splitting (a group larger than a split's target must overshoot that
+  split), not a regression guard for the largest-first fix — correctly
+  distinguished as such in both the commit message and ADR-0004.
 
-- **Claim 6 — `RAW_FIELDS` enforced, non-zero exit on low yield
-  (`21810cf`).** Confirmed: `_validate_raw_schema`
-  (`cvefixes.py:337-356`) checks the first row against `RAW_FIELDS` inside
-  `load_raw_dataset` and raises `ValueError` naming missing columns;
-  `main()` now returns an int exit code and exits 1 when
-  `stats["total"] < args.min_examples` (default 1). See **Questionable**
-  below for a real gap in how this composes with Claim 7 on the actual
-  worst case (total collapse to zero).
+  Checked the tightened tolerance test
+  (`test_split_examples_ratios_stay_within_tolerance`, 0.05 -> 0.01): ran
+  it against reconstructed pre-fix logic across seeds 1-5 — worst observed
+  deviation 0.008, under the new 0.01 band (this fixture's group sizes are
+  small, 1-3, so it was never the regression case; the heavy-tailed tests
+  above are what actually exercise the fix). Confirms the tightened band
+  is real (earned by the current small-group behavior, not vacuous) and
+  that reusing the old fixture alone would not have exposed the bug,
+  matching the commit message's own claim about this fixture's
+  limitations.
 
-- **Claim 7 — raise on silently empty split (`17e85ea`).** Confirmed:
-  `split_examples` (`cvefixes.py:302-312`) raises `ValueError` naming the
-  split and counts whenever a split with `ratio > 0` comes out empty, and
-  allows it when the configured ratio is genuinely 0
-  (`test_split_examples_allows_empty_split_when_its_ratio_is_zero`). The
-  bundled fixture was grown from 4 to 10 records specifically because this
-  guard immediately fired against the old 4-record `--dry-run` fixture
-  under default ratios — a real, not hypothetical, catch.
+  ADR-0004 (`ADR.md:288-408`) was updated with a full "Amendment
+  (2026-08-23, second hardening pass)" section: the bug, the two
+  measured-before numbers, the fix, the two measured-after numbers, and an
+  explicit "residual this doesn't close" section. Cross-checked every
+  number quoted there against the actual test run — all consistent.
 
-- **Claim 8 — `--dry-run` sample moved to package data (`c54b26d`).**
-  Confirmed: `sample_records.json` now lives at
-  `src/lora_bench/data/sample_records.json`, declared in
-  `pyproject.toml`'s `[tool.setuptools.package-data]`
-  (`"lora_bench.data" = ["sample_records.json"]`), loaded via
-  `importlib.resources.files("lora_bench.data").joinpath(...)`
-  (`cvefixes.py:395-410`) instead of `Path(__file__).resolve().parents[3]`.
-  Tests now load the same file through the same `_load_fixture_records()`
-  function (no second copy to drift). This is a correctness fix that
-  matters: the old scheme would have broken `--dry-run` — the first
-  command a new reader runs — under a real `pip install .` wheel.
+- **Item 2 — ADR-0003 causal-explanation fix (`86a6e4b`).** Confirmed the
+  correction is real and directionally right: the old text ("median...
+  notably better than the conservative 3.0 estimate assumed") is replaced
+  with an explanation attributing the 4/2400 residual to the *tail*
+  running denser than assumed, with the derived ~2.37 chars/token figure
+  (2,900 nominal cap / 1,223 measured max tokens ≈ 2.371) correctly framed
+  as an *implied worst-case ratio* ("implies... around 2.37"), not
+  presented as a directly measured per-example ratio — this is an honest
+  hedge, since the 2,900 figure is a nominal cap (`max_combined_chars`
+  2600 + unmeasured instruction-overhead estimate 300), not that specific
+  example's actual character count. No new number is presented as
+  measured that wasn't actually measured; the arithmetic is transparent
+  and reproducible from the ADR's own already-measured/stated inputs.
 
-- **Claim 9 — `scan_dataset.py` calls the real `filter_records`
-  (`0626436`).** Confirmed: `scan()` (`scripts/scan_dataset.py`) now
-  imports and calls `lora_bench.data.cvefixes.filter_records` directly
-  instead of re-implementing the empty-code/no-op checks inline, and
-  reports the real `DropReason` counter. The `--limit 0` divide-by-zero is
-  fixed by an early return (`if n == 0: print(...); return`) before any
-  division — read directly, this guard sits before every place `n` is
-  used as a divisor. ADR-0002 was updated with a fresh, script-reproduced
-  drop-reason breakdown and honestly explains why it isn't numerically
-  comparable to the old ad-hoc "~7%" figure (a conditional vs. marginal
-  rate) rather than silently presenting a different number as if it
-  corrected the old one.
+  Checked internal consistency across every location the old "conservative"
+  framing touched, not just the one paragraph pass 3 flagged: grepped the
+  whole repo for "conservative" post-fix — the five remaining hits
+  (`ADR.md:215,276`; `config.py:21,29,212`) are all now framed as *denying*
+  the old "hard conservative bound" reading (e.g. "not a hard conservative
+  bound", "a genuinely conservative bound would LOWER this constant"), not
+  reintroducing the backwards claim. `CHARS_PER_TOKEN_ESTIMATE`'s comment
+  (`config.py:18-40`), `Config.__post_init__`'s docstring
+  (`config.py:189-194`), and its `ValueError` message (`config.py:209-215`)
+  all consistently describe the estimate as a typical-case heuristic the
+  measured tail can and does breach, not a guaranteed bound — verified
+  each of the three sites individually, not just the first one found.
+  `CHARS_PER_TOKEN_ESTIMATE` itself is confirmed unchanged at `3.0`
+  (`config.py:41`), and the ADR/comment both explicitly and honestly state
+  why it wasn't re-derived (would require a fresh `token_budget.py` run
+  against a live tokenizer + dataset pull, not done here) rather than
+  quietly picking a new number.
 
-- **Claim 10 — `manifest.json` (`87db850`).** Confirmed:
-  `build_manifest`/`run_pipeline` (`cvefixes.py:434-483`) write
-  `manifest.json` alongside the splits with `generated_at`,
-  `lora_bench_version` (from `lora_bench.__version__`), `git_sha`
-  (best-effort via `git rev-parse HEAD`, `None` — not a placeholder — on
-  failure/non-git-checkout, wrapped in `try/except Exception`), the full
-  resolved config via `dataclasses.asdict(cfg)`, per-split counts, and
-  `drop_counts`. `test_run_pipeline_writes_a_manifest_with_expected_shape`
-  and `test_main_dry_run_succeeds_and_returns_zero` both check its
-  presence and shape.
+- **Item 3 — `scan_dataset.py` keep-rate cap fix (`5e3f03e`).** Confirmed:
+  `scan()` (`scripts/scan_dataset.py`) now constructs
+  `DataConfig(max_examples=None)` instead of `DataConfig()`, with a
+  comment correctly explaining why the pipeline's real default
+  (`max_examples=3000`) would otherwise turn `len(cleaned)` into a sample
+  size rather than a keep count once more than 3,000 rows survive
+  filtering at a large `--limit`.
 
-- **Claim 11 — `.env` actually loaded (`627fb49`).** Confirmed:
-  `_load_env_file()` (`cvefixes.py:486-509`) calls
-  `load_dotenv(find_dotenv(usecwd=True))`, explicitly not the bare
-  `load_dotenv()` default — the diff and its comment correctly identify
-  that the default searches from the calling module's file location
-  (which would always resolve to this repo's own `.env` in dev, and find
-  nothing under an installed wheel), not the process's cwd.
-  `test_load_env_file_populates_hf_token_from_dotenv` verifies this with a
-  real temp `.env` + `monkeypatch.chdir`, not a mock of `dotenv` itself.
+- **Item 4 — `scan_dataset.py` `--revision` default (`52545a6`).**
+  Confirmed: `--revision` now defaults to `DataConfig().revision` (the
+  pipeline's pinned SHA) instead of `None` (branch head), with updated
+  `--help` text explaining the rationale and how to opt back into a
+  branch-head scan (`--revision main`). This is exactly backwards-to-right
+  as claimed — a diagnostic whose whole job is producing ADR-0002's cited
+  numbers now scans the same snapshot the real pipeline reads by default.
 
-- **Claim 12 — deps in `pyproject.toml`, ruff CI gate (`12765ca`).**
-  Confirmed: `[project.dependencies]` in `pyproject.toml` now declares
-  `datasets`, `huggingface_hub`, `python-dotenv`, `PyYAML`;
-  `requirements-repo.txt` is now literally `-e .[dev]` plus comments — a
-  single source of truth. `.github/workflows/tests.yml` gained a separate
-  `lint` job running `ruff check .` and `ruff format --check .`. **I ran
-  this myself**: `.venv/Scripts/python.exe -m ruff check .` ->
-  `All checks passed!`; `.venv/Scripts/python.exe -m ruff format --check
-  src tests scripts` -> `9 files already formatted`. Both match the
-  claimed clean state.
+- **Item 5 — stale `--dry-run` help text (`947e211`).** Confirmed:
+  `cvefixes.py`'s `--dry-run` help text now reads "Use the bundled
+  sample_records.json package-data sample..." instead of the stale
+  "tests/fixtures sample" reference. Grepped the whole repo for remaining
+  `tests/fixtures` mentions: exactly two remain
+  (`REVIEW.md:173` in the pre-overwrite version, and
+  `tests/test_cvefixes.py:40`'s comment on `load_fixture()`), both
+  deliberately describing the historical move (per the commit message),
+  not stale pointers — confirmed by reading both in context.
 
-- **Claim 13 — LICENSE + stale `.gitignore` comment (`aaf3421`,
-  `d85266d`).** Confirmed: root `LICENSE` is a standard MIT license,
-  README updated to reference it. `.gitignore`'s comment above `/data/`
-  no longer references the never-existing `scripts/prepare_data.py` or
-  the now-removed `tests/fixtures/` path; it correctly points at
-  `python -m lora_bench.data.cvefixes` and
-  `src/lora_bench/data/sample_records.json`.
+- **Item 6 — `.gitignore` housekeeping (`2492523`).** Confirmed
+  empirically, not just by reading the diff. `git status --porcelain`
+  shows a clean tree (the two files don't appear); `git status
+  --ignored --porcelain` shows them as `!! DAY1_FIX_PROMPT.md` / `!!
+  DAY1_FIX_PROMPT_2.md` (ignored, not merely untracked); `git check-ignore
+  -v` confirms both match the new `.gitignore:29: /DAY1_FIX_PROMPT*.md`
+  rule specifically. Also verified the ruff claim empirically rather than
+  taking it on faith: both files do contain embedded ```python fences
+  (confirmed by grep); with `--no-respect-gitignore`, `ruff format --check
+  .` fails (exit 1, "2 files would be reformatted") specifically on these
+  two `.md` files' embedded Python blocks, while `ruff check .` (lint)
+  passes regardless — so the `.gitignore` fix is specifically what makes
+  `ruff format --check .` (not `ruff check .`) clean against the whole
+  repo, exactly as the commit message states. Neither file was deleted or
+  moved, as claimed (non-destructive choice, explicitly justified).
 
-- **Tests actually exercise the logic, and pass.** Ran
-  `.venv/Scripts/python.exe -m pytest -q`: **96 passed in 1.47s**, matching
-  the claimed count. Spot-checked (not just counted) that the new/changed
-  tests assert real behavior, not smoke checks: exact `DropReason` sets,
-  exact surviving `cve_id` sets, boundary-exact config-validator tests
-  (`test_config_accepts_combined_chars_at_the_budget_boundary` checks both
-  sides of the boundary), and a genuine crash-reproduction parametrization
-  for Claim 1.
+- **Full test suite.** Ran `.venv/Scripts/python.exe -m pytest -q`:
+  **118 passed** (matches the claimed count; confirmed the +22 over the
+  prior round's 96 comes from 10+10 new parametrized heavy-tailed split
+  tests plus the 1 total-collapse regression test (`343d0c6`) plus the 1
+  residual-documentation test — `96 + 22 = 118`, verified by counting new
+  `test_`/`@pytest.mark.parametrize` lines added in the range).
 
-- **Free-tier / no hard GPU dependency.** `requirements-colab.txt` is
-  untouched by this diff (`git diff 98b0388..53af83d --
-  requirements-colab.txt` is empty). `scripts/token_budget.py` (new)
-  needs `transformers` + network but is explicitly documented as NOT part
-  of `requirements-repo.txt`/CI, NOT part of the pytest suite, and to be
-  run manually in a throwaway env or Colab — the numbers it produced are
-  reported as real output ("was run... measured"), not estimated and
-  presented as measured.
+- **Lint/format, whole repo.** Ran `.venv/Scripts/python.exe -m ruff check
+  .` -> `All checks passed!`; `.venv/Scripts/python.exe -m ruff format
+  --check .` -> `15 files already formatted`. Both against the bare `.`
+  path (not `src tests scripts`), which only works cleanly because of the
+  item-6 `.gitignore` fix (see above).
 
-- **Secrets.** Grepped the full hardening-pass diff (`git diff
-  98b0388..53af83d`) for `hf_[A-Za-z0-9]{10,}` and
-  `HF_TOKEN\s*=\s*['"a-zA-Z0-9]` token patterns — the only hit is a
-  synthetic `HF_TOKEN=test-token-value` string inside a unit test
-  (`tests/test_cvefixes.py`, `test_load_env_file_populates_hf_token_from_dotenv`),
-  not a real credential. `.env.example` is unchanged and still contains
-  only variable names, no values. `git check-ignore -v .env` confirms
-  `.gitignore:1:.env` still matches; `.env` remains untracked
-  (`git status` shows it under `!!`, ignored).
+- **`343d0c6` (resolved-after-review item from the prior round, carried
+  into this range).** Confirmed real: `main()` (`cvefixes.py:549-559`) now
+  wraps `run_pipeline(...)` in `try/except ValueError`, printing the same
+  `ERROR: data-prep pipeline failed: {e}` / exit-1 shape used by the
+  `--min-examples` path.
+  `test_main_returns_nonzero_cleanly_on_total_filtering_collapse`
+  reproduces the exact repro case (a config allowing only `languages:
+  [Rust]` against the fixture, which contains none) and asserts exit 1 +
+  `"ERROR"` in stderr. Ran this test in isolation — passes.
 
-- **Scope discipline.** No GPU/notebook/PEFT/bitsandbytes/torch imports
-  anywhere in the diff. `ROADMAP.md` was updated to document the
-  hardening pass explicitly under Day 1's existing checklist item, not as
-  a new day, and its description accurately summarizes what changed.
+- **Secrets.** Grepped `git diff 53af83d..HEAD` for `hf_[A-Za-z0-9]{10,}`
+  and `token\s*=\s*['"][a-z0-9]{15,}` patterns — no hits. `.env` remains
+  gitignored (`git check-ignore -v .env` -> `.gitignore:1:.env`) and shows
+  as `!!` (ignored) in `git status --ignored`, not tracked.
 
-- **Atomic, real Conventional Commits.** All 15 commits in the range
-  (`98b0388..53af83d`; note this is 15, not 14 — `git rev-list --count`
-  confirms — a minor discrepancy in the invoking prompt's count, not a
-  finding) are correctly typed (`fix:`, `feat:`, `refactor:`, `chore:`,
-  `docs:`) and each is a single coherent change with its own tests/docs
-  updated in the same commit. None bundle unrelated work.
+- **Scope discipline / Conventional Commits.** All 8 commits in range are
+  correctly typed (`fix:` x6, `docs:` x1, `chore:` x1), each a single
+  coherent change with its own tests/docs in the same commit — no bundling
+  of unrelated work. `git diff 53af83d..HEAD --stat` touches exactly the
+  files the 6 claims describe (`.gitignore`, `ADR.md`, `REVIEW.md`,
+  `scripts/scan_dataset.py`, `src/lora_bench/config.py`,
+  `src/lora_bench/data/cvefixes.py`, `tests/test_cvefixes.py`) plus
+  nothing else. No GPU/notebook/PEFT/bitsandbytes/torch code anywhere in
+  the diff. `requirements-colab.txt` untouched.
 
 - **MVP non-negotiables 1-3 / past "just a demo" checklist:** still not
-  applicable — this diff is entirely repo-side data-prep hardening, no
-  fine-tune, comparison, or report exists yet.
+  applicable — this range is entirely repo-side data-prep bug fixes and
+  doc corrections; no fine-tune, comparison, or report exists yet.
 
 ## Questionable
 
-- **A true zero-yield run does not go through the graceful
-  `--min-examples` path; it crashes with an uncaught `ValueError`
-  instead.** Claim 6 and Claim 7 were each verified correct in isolation,
-  but their composition on the actual worst case they're jointly meant to
-  guard against — every row getting filtered out — has a gap. I
-  reproduced this directly:
+- **ADR-0004's quoted pre-fix "0.102" figure for the six-heavy-groups
+  scenario doesn't independently reproduce exactly.** Re-deriving the
+  pre-fix (shuffle-order-only) behavior against the exact shipped
+  `_heavy_tailed_grouped_examples(seed)` fixture (default args: 280
+  singletons + 6 groups sized `randint(60,200)` per seed) across seeds
+  1-10 gives a worst deviation of 0.0837, not the claimed 0.102. The
+  companion one-dominant-group figure (0.192) reproduces exactly, and the
+  qualitative story (severe, seed-dependent skew pre-fix; ~0 post-fix) is
+  fully supported either way — this doesn't change the verdict on the fix
+  itself. Most likely explanation: the "before" numbers were captured by a
+  throwaway verification script during development (as pass 3's own
+  review prescribed) that wasn't necessarily using byte-identical
+  parameters to the fixture that ultimately shipped, and the after-the-
+  fact prose rounds/restates a number from that ephemeral run rather than
+  the shipped fixture. Low stakes since the *shipped, re-runnable*
+  evidence (all four post-fix numbers, the dominant-group pre-fix number,
+  and the tests' own asserted 0.01 band) is fully reproducible and
+  consistent — but if this ADR is ever cited as a precise historical
+  measurement rather than an illustrative one, it's worth a one-line
+  amendment noting the six-groups pre-fix figure is approximate/from a
+  non-committed script, or re-running and updating it to match exactly.
 
-  ```
-  RAISED: ValueError train split came out empty even though train_ratio=0.8 > 0
-  (0 examples across 0 CVE groups). ...
-  ```
-
-  (via `main(["--dry-run", "--config", <cfg with languages: [Rust]>, ...])`,
-  which drops every fixture row). Because `split_examples` raises
-  *before* `main()` ever reaches its `stats["total"] < args.min_examples`
-  check, the polished "ERROR: only N example(s) survived filtering..."
-  stderr message and clean exit code 1 (`cvefixes.py:560-567`) never
-  fires on this input — instead an unhandled exception propagates out of
-  `run_pipeline`/`main()` as a raw Python traceback. The process does
-  still terminate with a non-zero exit code (Python's default behavior
-  for an uncaught exception), so this isn't a silent-success regression
-  and isn't data corruption — but it means the two purpose-built guard
-  rails produce inconsistent, and in this case worse, operator-facing
-  failure modes: a clean one-line message in the "some rows survived but
-  too few" case, vs. a traceback several stack frames removed from the
-  actual root cause ("every row was filtered out") in the strictly worse
-  "zero rows survived" case. Notably, the hardening pass's own test suite
-  is aware of exactly this: the comment in
-  `test_main_returns_nonzero_below_min_examples`
-  (`tests/test_cvefixes.py`) reads "11 is unreachable, so this exercises
-  the floor without also tripping split_examples' separate empty-split
-  guard (which fires first on a truly empty result and would raise
-  instead of returning cleanly)." This was a known, accepted trade-off,
-  not an oversight — but it's exactly the kind of gap worth a human
-  decision: either catch the `ValueError` from `run_pipeline` in `main()`
-  and route it through the same clean stderr-message-and-exit-1 path (so
-  an automated Colab/CI log always sees the same shape of failure
-  message), or explicitly document in `main()`'s docstring/README that a
-  full-collapse run fails via traceback rather than the `--min-examples`
-  message, so a future reader doesn't assume the two failure modes are
-  equivalent.
-
-- **`--min-examples` default of 1 only catches literal zero-survivor
-  runs, not a "near-zero" partial collapse.** The commit message and this
-  task's framing describe the fix as guarding against a "near-zero-yield
-  run," but the shipped default (`--min-examples 1`) only fails a run
-  that produces *zero* examples; a schema/language-distribution shift
-  that drops yield from ~2,400 to, say, 5 examples would still exit 0
-  unless an operator explicitly raises `--min-examples` for a given run.
-  This is minor and easily addressed by the operator (the flag exists and
-  is documented), but it's worth noting the default doesn't by itself
-  change behavior for a partial collapse — only a total one (and even
-  then, see the finding above).
+- **`ROADMAP.md`'s Day 1 entry doesn't mention this second hardening
+  pass.** `ROADMAP.md:16-26` documents the *first* hardening pass in
+  detail (crash bug, data-corruption bug, unpinned revision, etc.) and
+  says "none of this was caught by the first self-review pass, which is
+  itself worth remembering going into Day 2's review" — but doesn't
+  mention that a *third* review then found a blocking-severity defect
+  inside that hardening pass's own new code (the split-skew bug), which
+  this range fixes. Given the file's own stated purpose (a concrete record
+  of what's in scope and, per its Day 1 entry, a place to record what
+  review passes catch), a reader skimming `ROADMAP.md` alone would not
+  learn that the hardening pass itself needed hardening. Not a code defect
+  and doesn't block Day 1's closure, but worth a short addendum alongside
+  the existing note, given the project's own precedent of recording this
+  kind of self-review miss there.
 
 ## Blocking
 
-None.
-
-## Stray file (not a code finding)
-
-`D:\LoRA-bench\DAY1_FIX_PROMPT.md` is present in the working tree,
-untracked (`git status` shows it as `??`, not ignored), and is not part of
-any commit in the reviewed range or created by the hardening-pass work
-itself — it reads as the prompt used to kick off this hardening session,
-apparently saved to the repo root. It contains no secrets. It's not a
-defect and requires no code change, but it's clutter in the repo root the
-user likely wants to delete, move outside the repo, or explicitly
-`.gitignore` before it gets accidentally committed. Left untouched here.
-
-## Note on this file superseding the prior review
-
-Per this agent's standing instruction, `REVIEW.md` is overwritten
-in full on every run — it reflects only the latest review, not a running
-log. This file replaces the previous Day 1 review (which covered
-`351e77f..1585b68` and closed with "no blocking items," later shown by a
-deeper review to have missed the crash bug and the data-corruption bug
-this hardening pass fixes). That prior review's content no longer appears
-anywhere in this file, as intended — the durable record of what the first
-pass missed and why now lives in `ROADMAP.md`'s Day 1 entry and in
-ADR-0003/ADR-0004/ADR-0005, not here.
-
-## Resolved after review
-
-The first questionable item (total-filtering-collapse raising an uncaught
-`ValueError` instead of routing through the clean `--min-examples` exit
-path) was fixed in commit `343d0c6`, chosen over documenting the
-discrepancy since routing both failure modes through the same shape is
-strictly better UX for an unattended run: `main()` now catches `ValueError`
-around `run_pipeline()` and reports it via the same
-stderr-message-and-exit-1 path. Added
-`test_main_returns_nonzero_cleanly_on_total_filtering_collapse`,
-reproducing the reviewer's exact repro case (a config with a disallowed-
-only language). Full suite: 97 passed (was 96); `ruff check`/`ruff format
---check` still clean.
-
-The second questionable item (`--min-examples` default of 1 only catches
-literal-zero collapse, not a partial one) is left as-is: the flag exists,
-is documented, and requires an operator to set an appropriate floor for
-their own run size — treated as expected, not a gap to silently paper
-over with an arbitrary default.
+None. All 6 claimed fixes were verified against the actual diff (not just
+the round's summary), the specific blocking-severity item (split-group
+skew) was independently re-derived and its fix confirmed to genuinely
+close the measured gap (worst deviation 0.192 -> 0.0000 on the dominant-
+group scenario, reproduced exactly), and the full test suite (118 tests),
+`ruff check .`, and `ruff format --check .` all pass cleanly against the
+current `HEAD`.
 
 ## Verdict
 

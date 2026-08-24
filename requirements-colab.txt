@@ -9,15 +9,19 @@
 # driver combo constrains what's installable. Treat this list as scope, not
 # a lockfile.
 #
-# Day 2 — LoRA/QLoRA fine-tuning:
-torch
+# Day 2 — LoRA/QLoRA fine-tuning. `torch`/`datasets` aren't listed:
+# `torch` ships preinstalled in the Colab GPU runtime (installing a
+# version here risks fighting Colab's own CUDA build); `datasets` is a
+# repo-side dependency already (see pyproject.toml), pulled in by
+# `pip install -e .`. `trl` was dropped: plain transformers.Trainer covers
+# what this notebook needs, with a much more stable/stable-documented API
+# surface to build against without being able to run it here first.
+# `sentencepiece` was dropped too: Qwen2.5's tokenizer doesn't need it
+# (confirmed empirically -- it loads fine without it).
 transformers
 peft
 bitsandbytes
 accelerate
-trl
-datasets
-sentencepiece
 
 # Day 3 — quantization + serving the quantized model for benchmarking
 # (llama.cpp/GGUF chosen vs. vLLM/AWQ gets a dated ADR.md entry once we

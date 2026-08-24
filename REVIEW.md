@@ -261,6 +261,20 @@ group scenario, reproduced exactly), and the full test suite (118 tests),
 `ruff check .`, and `ruff format --check .` all pass cleanly against the
 current `HEAD`.
 
+## Resolved after review
+
+Both questionable items were addressed in commit `a5d44f0`:
+
+- ADR-0004's six-heavy-groups pre-fix figure was independently re-derived
+  against the exact shipped `_heavy_tailed_grouped_examples` fixture
+  (0.0837, matching this review's own finding, not the previously-stated
+  0.102) and corrected in both places it appeared.
+- `ROADMAP.md`'s Day 1 entry now records that a third review found a
+  blocking-severity defect inside the first hardening pass's own new code.
+
+Full suite re-verified after both fixes: 118 passed; `ruff check .` and
+`ruff format --check .` both clean.
+
 ## Verdict
 
 No blocking items — day may be closed out.

@@ -25,6 +25,23 @@ instead of an implicit boundary.
   by the first self-review pass, which is itself worth remembering going
   into Day 2's review.
 
+  **Second hardening pass (same day, after a third, deeper-still review):**
+  the *first* hardening pass's own new code had a real blocking-severity
+  bug of its own — the group-aware split's largest-remaining-need
+  heuristic assigned CVE-groups in shuffled order only, which degrades
+  badly under realistic heavy-tailed group sizes (a CVE fixed across many
+  files is one large group; measured worst-case realized-ratio deviation
+  up to 0.192 against a 0.1 target). Fixed by sorting groups largest-first
+  before the greedy pass (ADR-0004's amendment). The same review also
+  caught a backwards causal explanation in ADR-0003 (the truncation-risk
+  residual comes from the token-length *tail* being denser than assumed,
+  not the median being sparser — an earlier version of that ADR said the
+  opposite) and two smaller `scan_dataset.py` diagnostic bugs. Two hardening
+  passes catching real defects in a single day, including one pass
+  introducing a genuine bug while fixing others, is itself the strongest
+  argument in this repo for never skipping the review step — noted here
+  explicitly so it isn't lost to a git log nobody rereads.
+
 - [ ] **Day 2 — LoRA/QLoRA fine-tuning (Colab, GPU).**
   The Colab notebook: load the Day 1 train/val JSONL, QLoRA fine-tune
   Qwen2.5-Coder-1.5B-Instruct (bitsandbytes 4-bit + PEFT), run the small

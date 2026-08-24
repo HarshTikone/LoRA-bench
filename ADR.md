@@ -321,9 +321,17 @@ compensate — measured on two synthetic heavy-tailed scenarios (10 seeds
 each, target ratios 0.8/0.1/0.1):
 
 ```
-280 singletons + 6 groups of 60-200 rows:  worst |deviation| = 0.102
+280 singletons + 6 groups of 60-200 rows:  worst |deviation| = 0.084
 300 singletons + 1 group of 700 rows:      worst |deviation| = 0.192
 ```
+
+(Corrected 2026-08-24: the six-groups figure originally read 0.102, from a
+throwaway verification script during development that wasn't run against
+byte-identical parameters to the fixture that ultimately shipped as
+`_heavy_tailed_grouped_examples`. Re-derived directly against that exact
+shipped fixture: 0.0837. The one-dominant-group figure (0.192) already
+matched exactly. Neither the fix's correctness nor its post-fix numbers
+below were affected — this only corrects a pre-fix reference point.)
 
 A test split that can land at 1.5% or 20% depending on the seed is not one
 you can report a number off. Processing groups largest-first fixes this:
@@ -371,7 +379,7 @@ fixture. Two shapes were measured, both after the largest-first fix above:
 
 All three are asserted at a 0.01 tolerance band in the test suite — tight
 enough that it would have failed against the pre-largest-first-fix
-behavior (0.102 and 0.192 respectively on the two heavy-tailed shapes
+behavior (0.084 and 0.192 respectively on the two heavy-tailed shapes
 above), not the old 0.05 band, which was loose enough to pass even the
 unfixed heuristic on small-group-size data alone.
 

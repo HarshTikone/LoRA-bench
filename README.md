@@ -7,9 +7,13 @@ GPU-bound runs in a single free-tier Google Colab T4 session; everything
 else (data prep, config, the eval/benchmark harness) is plain, unit-tested
 Python that runs here, with no GPU.
 
-**Status:** Day 1 of the roadmap below is done — the data prep pipeline.
-No notebook yet, no comparison numbers yet. See [ROADMAP.md](ROADMAP.md)
-for what's next and [ADR.md](ADR.md) for why the model/dataset were chosen.
+**Status:** Day 1 (data prep pipeline) is done. Day 2's fine-tuning
+notebook (`notebooks/finetune.ipynb`) is written and ready to run, but
+**has not actually been run yet** — it needs a live Colab T4 session this
+environment doesn't have. No comparison numbers, sweep results, or
+adapter weights exist until a human runs it and brings the results back.
+See [ROADMAP.md](ROADMAP.md) for what's next and [ADR.md](ADR.md) for why
+the model/dataset were chosen.
 
 This repo will not claim a comparison result until an actual Colab T4 run
 has produced it — anything reported as measured always came from a real
@@ -20,7 +24,7 @@ run, never a fabricated placeholder.
 | Piece | Runs where | Status |
 |---|---|---|
 | Data prep (CVEfixes -> instruction JSONL) | here (CPU, tested) | done (Day 1) |
-| LoRA/QLoRA fine-tune | Colab notebook (T4) | not started (Day 2) |
+| LoRA/QLoRA fine-tune + rank sweep | Colab notebook (T4) | notebook ready, **not yet run** (Day 2) |
 | GGUF/AWQ quantization | Colab notebook (T4) | not started (Day 3) |
 | Eval/benchmark harness (quality/latency/memory/cost) | here (CPU, tested) + Colab (GPU run) | not started (Day 3) |
 | End-to-end notebook + report | Colab notebook (T4) | not started (Day 4) |
@@ -36,7 +40,7 @@ src/lora_bench/
     sample_records.json  # bundled --dry-run/test sample (real package data, not a tests/ path)
 configs/default.yaml  # the config values actually used by a run
 tests/                 # unit tests (no network — see "Tests" below)
-notebooks/             # Colab notebook goes here starting Day 2
+notebooks/finetune.ipynb  # Day 2: data prep + LoRA/QLoRA fine-tune + rank sweep (Colab T4)
 ADR.md                 # dated decisions that specialize the default stack, and why
 ROADMAP.md             # day-by-day scope, so later days don't creep into each other
 ```
@@ -93,6 +97,26 @@ fixture sample instead of the real dataset:
 ```bash
 .venv/Scripts/python -m lora_bench.data.cvefixes --dry-run --out-dir /tmp/lora_bench_dryrun
 ```
+
+## Running the fine-tuning notebook (Day 2, Colab, GPU)
+
+`notebooks/finetune.ipynb` runs data prep + LoRA/QLoRA fine-tuning + the
+rank sweep, entirely inside Colab on the free T4 tier:
+
+1. Push this repo to GitHub if you haven't (the notebook's first code
+   cell clones it — see the notebook's own "Before you start" for the
+   private-repo case).
+2. Open the notebook in Colab (upload it, or open directly from GitHub).
+3. **Runtime > Change runtime type > T4 GPU.**
+4. Optional: add an `HF_TOKEN` secret (Colab's key-icon sidebar panel) —
+   raises Hub rate limits, not required since the dataset/model are public.
+5. Run all cells top to bottom.
+
+This environment has no GPU, so this notebook **cannot be run or verified
+here** — it's built and reviewed for correctness (see `ADR.md`, `REVIEW.md`),
+but every number it would produce (sweep val losses, the winning LoRA
+config, training loss, adapter weights) stays unmeasured until a human
+actually runs it in Colab and brings the results back.
 
 ## Tests
 

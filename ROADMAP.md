@@ -42,13 +42,24 @@ instead of an implicit boundary.
   argument in this repo for never skipping the review step — noted here
   explicitly so it isn't lost to a git log nobody rereads.
 
-- [ ] **Day 2 — LoRA/QLoRA fine-tuning (Colab, GPU).**
-  The Colab notebook: load the Day 1 train/val JSONL, QLoRA fine-tune
-  Qwen2.5-Coder-1.5B-Instruct (bitsandbytes 4-bit + PEFT), run the small
-  LoRA rank/hyperparameter sweep the past-"just a demo" checklist requires,
-  write the winner + reasoning into ADR.md, save adapter weights. Runs only
-  in Colab — this repo's non-GPU environment can't execute it, only build
-  and review the notebook/config for correctness.
+- [x] **Day 2 — LoRA/QLoRA fine-tuning (Colab, GPU): notebook built, not yet run.**
+  `notebooks/finetune.ipynb`: runs Day 1's data prep inside Colab, QLoRA
+  fine-tunes Qwen2.5-Coder-1.5B-Instruct (bitsandbytes 4-bit + PEFT), runs
+  a 3-candidate LoRA rank sweep (r=8/16/32, compared by validation loss)
+  per the past-"just a demo" checklist, then does the full fine-tune with
+  the winning config and saves the adapter. Added
+  `to_chat_messages(FixDiffExample)` to the repo as the single tested
+  source of truth for prompt rendering, shared by `scripts/token_budget.py`
+  and the notebook, so they can't silently diverge.
+
+  **What's still open:** this repo-side environment has no GPU, so the
+  notebook could be built, unit-tested where CPU-testable (chat rendering,
+  tokenizer/dataset construction, all validated in a throwaway CPU venv
+  against the real installed library versions), and reviewed for
+  correctness — but not actually run. No sweep results, no winning
+  hyperparameters, no adapter weights, no ADR-0006 exist yet. Those need a
+  human to run the notebook in a live Colab T4 session and bring the
+  results back; see the notebook's "Next" section and `README.md`.
 
 - [ ] **Day 3 — Quantization + benchmark harness.**
   Quantize the fine-tuned model to GGUF or AWQ (ADR entry for whichever is

@@ -17,11 +17,18 @@
 # what this notebook needs, with a much more stable/stable-documented API
 # surface to build against without being able to run it here first.
 # `sentencepiece` was dropped too: Qwen2.5's tokenizer doesn't need it
-# (confirmed empirically -- it loads fine without it).
+# (confirmed empirically -- it loads fine without it). `jinja2` IS listed,
+# even though `transformers` doesn't declare it as a hard dependency and
+# it happens to work today only because Colab's preinstalled torch pulls
+# it in transitively -- `tokenizer.apply_chat_template` needs it directly
+# (same reason scripts/token_budget.py's docstring already lists it), and
+# an implicit torch-transitive dependency isn't something this file's
+# "reviewable as text/diff" contract should rely on staying true.
 transformers
 peft
 bitsandbytes
 accelerate
+jinja2
 
 # Day 3 — quantization + serving the quantized model for benchmarking
 # (llama.cpp/GGUF chosen vs. vLLM/AWQ gets a dated ADR.md entry once we

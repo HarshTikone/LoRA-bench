@@ -246,6 +246,22 @@ def to_example(rec: dict) -> FixDiffExample:
     )
 
 
+def to_chat_messages(example: FixDiffExample) -> list[dict[str, str]]:
+    """Render one example as chat turns for tokenization/training.
+
+    Single source of truth for prompt structure: scripts/token_budget.py
+    (which measures whether examples fit model.max_seq_len) and the Day 2
+    fine-tuning notebook both render training examples through this
+    function, so they can't silently diverge on what a "training example"
+    actually looks like -- a real risk given the notebook can't be
+    unit-tested here (no GPU), so this piece of it can be.
+    """
+    return [
+        {"role": "user", "content": f"{example.instruction}\n\n{example.input}"},
+        {"role": "assistant", "content": example.output},
+    ]
+
+
 def build_dataset(
     raw_records: Iterable[dict], cfg: DataConfig
 ) -> tuple[list[FixDiffExample], Counter]:

@@ -28,6 +28,7 @@ from lora_bench.data.cvefixes import (
     read_jsonl,
     run_pipeline,
     split_examples,
+    to_chat_messages,
     to_example,
     write_jsonl,
 )
@@ -319,6 +320,24 @@ def test_build_dataset_end_to_end_on_fixture():
     assert len(examples) == 10
     assert all(isinstance(e, FixDiffExample) for e in examples)
     assert sum(drop_counts.values()) == 6
+
+
+def test_to_chat_messages_shape_and_content():
+    cfg = DataConfig()
+    cleaned, reason = clean_record(make_raw(language="Python"), cfg)
+    assert reason is None
+    ex = to_example(cleaned)
+
+    messages = to_chat_messages(ex)
+
+    assert messages == [
+        {"role": "user", "content": f"{ex.instruction}\n\n{ex.input}"},
+        {"role": "assistant", "content": ex.output},
+    ]
+    # the model's target (the fix) is the assistant turn, not folded into
+    # the prompt -- this is what training will teach the model to produce
+    assert messages[1]["content"] == ex.output
+    assert ex.output not in messages[0]["content"]
 
 
 # --- split_examples ---------------------------------------------------------

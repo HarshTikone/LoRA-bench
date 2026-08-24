@@ -3,12 +3,14 @@ train.jsonl against the actual training tokenizer/chat template, to check
 (or refresh) the heuristic bound ADR-0003 sets via
 DataConfig.max_combined_chars vs. ModelConfig.max_seq_len.
 
-Needs `transformers` (a Day 2/Colab dependency -- deliberately NOT in
-requirements-repo.txt, to keep this repo's CPU-side deps small; install it
-into a throwaway environment or run this in Colab, not the repo-side venv)
-and network access to download the tokenizer. NOT part of the pytest
-suite -- run manually and report what it actually printed; never estimate
-this distribution by hand and present it as measured.
+Needs `transformers` + `jinja2` (Day 2/Colab-only deps -- deliberately NOT
+in requirements-repo.txt, to keep this repo's CPU-side deps small) and
+network access to download the tokenizer. Also imports `lora_bench`
+itself (for `to_chat_messages`/`FixDiffExample`), so run it somewhere that
+package is importable too: `pip install transformers jinja2 && pip install
+-e .` in a throwaway environment, or run this in Colab. NOT part of the
+pytest suite -- run manually and report what it actually printed; never
+estimate this distribution by hand and present it as measured.
 
 Usage:
     python scripts/token_budget.py data/processed/train.jsonl --max-seq-len 1024
@@ -21,18 +23,20 @@ import json
 import statistics
 from pathlib import Path
 
+from lora_bench.data.cvefixes import to_chat_messages
+from lora_bench.data.schema import FixDiffExample
+
 
 def render_example(rec: dict, tokenizer) -> str:
-    """Render one example the way Day 2 will actually train on it: the
-    instruction + vulnerable code as a user turn, the fixed code as the
-    assistant's reply, through the tokenizer's own chat template -- not a
-    hand-rolled prompt string, since the real overhead comes from
-    whatever role markers/special tokens the template actually inserts.
+    """Render one example the way Day 2 will actually train on it, through
+    the tokenizer's own chat template -- not a hand-rolled prompt string,
+    since the real overhead comes from whatever role markers/special
+    tokens the template actually inserts. Message structure comes from
+    to_chat_messages(), the same function the fine-tuning notebook uses,
+    so this measurement and actual training can't silently render examples
+    differently.
     """
-    messages = [
-        {"role": "user", "content": f"{rec['instruction']}\n\n{rec['input']}"},
-        {"role": "assistant", "content": rec["output"]},
-    ]
+    messages = to_chat_messages(FixDiffExample.from_dict(rec))
     return tokenizer.apply_chat_template(messages, tokenize=False)
 
 

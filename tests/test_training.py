@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 
 from lora_bench.data.schema import FixDiffExample
@@ -11,16 +13,18 @@ from lora_bench.training import (
 
 class FakeTokenizer:
     eos_token_id = 99
+    eos_token = "<eos>"
     pad_token_id = 0
     padding_side = "right"
 
-    def __init__(self, *, full_ids=None, prompt_ids=None):
+    def __init__(self, *, assistant_ids=None, full_text="promptresponse<eos>", prompt_ids=None):
         self.prompt_ids = prompt_ids if prompt_ids is not None else [10, 11, 12]
-        self.full_ids = full_ids if full_ids is not None else [10, 11, 12, 20, 21, 99]
+        self.assistant_ids = assistant_ids if assistant_ids is not None else [20, 21, 99]
+        self.full_text = full_text
 
     def apply_chat_template(self, messages, *, tokenize, add_generation_prompt):
         assert tokenize is False
-        return "prompt" if add_generation_prompt else "full"
+        return "prompt" if add_generation_prompt else self.full_text
 
     def __call__(self, text, **kwargs):
         assert kwargs == {
@@ -28,7 +32,7 @@ class FakeTokenizer:
             "truncation": False,
             "padding": False,
         }
-        return {"input_ids": self.prompt_ids if text == "prompt" else self.full_ids}
+        return {"input_ids": self.prompt_ids if text == "prompt" else self.assistant_ids}
 
 
 def example() -> FixDiffExample:
@@ -73,21 +77,46 @@ def test_tokenize_training_example_keeps_exact_budget_boundary():
 
 
 def test_tokenize_training_example_rejects_boundary_mismatch_loudly():
-    tokenizer = FakeTokenizer(prompt_ids=[1, 2], full_ids=[1, 3, 20, 99])
+    tokenizer = FakeTokenizer(full_text="different response<eos>")
     with pytest.raises(ValueError, match="assistant-label boundary"):
         tokenize_training_example(example(), tokenizer, max_seq_len=10)
 
 
 def test_tokenize_training_example_drops_missing_eos():
-    tokenizer = FakeTokenizer(full_ids=[10, 11, 12, 20])
+    tokenizer = FakeTokenizer(full_text="promptresponse", assistant_ids=[20])
     outcome = tokenize_training_example(example(), tokenizer, max_seq_len=10)
     assert outcome.drop_reason == TokenizationDropReason.MISSING_EOS
 
 
 def test_tokenize_training_example_drops_empty_assistant_turn():
-    tokenizer = FakeTokenizer(full_ids=[10, 11, 12], prompt_ids=[10, 11, 12])
-    outcome = tokenize_training_example(example(), tokenizer, max_seq_len=10)
+    empty_example = replace(example(), output="")
+    tokenizer = FakeTokenizer(full_text="prompt<eos>", assistant_ids=[99])
+    outcome = tokenize_training_example(empty_example, tokenizer, max_seq_len=10)
     assert outcome.drop_reason == TokenizationDropReason.NO_ASSISTANT_TOKENS
+
+
+def test_tokenize_training_example_preserves_prompt_when_bpe_would_merge_boundary():
+    tokenizer = FakeTokenizer(
+        full_text="prompt\nresponse<eos>",
+        prompt_ids=[10, 11, 12],
+        assistant_ids=[30, 20, 21, 99],
+    )
+    outcome = tokenize_training_example(example(), tokenizer, max_seq_len=7)
+    assert outcome.record == {
+        "input_ids": [10, 11, 12, 30, 20, 21, 99],
+        "attention_mask": [1, 1, 1, 1, 1, 1, 1],
+        "labels": [IGNORE_INDEX, IGNORE_INDEX, IGNORE_INDEX, 30, 20, 21, 99],
+    }
+
+
+def test_tokenize_training_example_allows_whitespace_after_terminal_eos():
+    tokenizer = FakeTokenizer(
+        full_text="promptresponse<eos>\n",
+        assistant_ids=[20, 21, 99, 7],
+    )
+    outcome = tokenize_training_example(example(), tokenizer, max_seq_len=7)
+    assert outcome.kept
+    assert outcome.record["labels"] == [IGNORE_INDEX] * 3 + [20, 21, 99, 7]
 
 
 def test_completion_only_collator_preserves_labels_and_masks_padding():

@@ -56,9 +56,11 @@ def tokenize_training_example(
     """Create completion-only causal-LM labels for one chat example.
 
     The prompt is rendered with the model's generation marker, then checked
-    as an exact token prefix of the full user/assistant conversation. That
-    makes the assistant boundary explicit without searching for a fragile
-    hard-coded marker in already-tokenized text.
+    as an exact text prefix of the full user/assistant conversation. The
+    exact assistant suffix is tokenized separately and appended to the prompt
+    IDs. This preserves the generation-time prompt tokenization even when a
+    BPE tokenizer would otherwise merge the prompt's final token with the
+    first character of the assistant response.
     """
     if type(max_seq_len) is not int or max_seq_len <= 0:
         raise ValueError(f"max_seq_len must be a positive integer, got {max_seq_len!r}")
@@ -74,18 +76,21 @@ def tokenize_training_example(
         tokenize=False,
         add_generation_prompt=False,
     )
-    prompt_ids = _token_ids(tokenizer, prompt_text)
-    full_ids = _token_ids(tokenizer, full_text)
-    token_count = len(full_ids)
-
-    if full_ids[: len(prompt_ids)] != prompt_ids:
+    if not full_text.startswith(prompt_text):
         raise ValueError(
-            "The rendered generation prompt is not an exact token prefix of the full "
+            "The rendered generation prompt is not an exact text prefix of the full "
             "conversation; refusing to guess the assistant-label boundary."
         )
+
+    assistant_text = full_text[len(prompt_text) :]
+    prompt_ids = _token_ids(tokenizer, prompt_text)
+    assistant_ids = _token_ids(tokenizer, assistant_text)
+    full_ids = prompt_ids + assistant_ids
+    token_count = len(full_ids)
+
     if token_count > max_seq_len:
         return TokenizationOutcome(None, TokenizationDropReason.OVER_BUDGET, token_count)
-    if len(prompt_ids) >= token_count:
+    if not messages[-1]["content"].strip() or not assistant_ids:
         return TokenizationOutcome(
             None,
             TokenizationDropReason.NO_ASSISTANT_TOKENS,
@@ -93,7 +98,13 @@ def tokenize_training_example(
         )
 
     eos_token_id = getattr(tokenizer, "eos_token_id", None)
-    if eos_token_id is None or not full_ids or full_ids[-1] != eos_token_id:
+    eos_token = getattr(tokenizer, "eos_token", None)
+    if (
+        eos_token_id is None
+        or not eos_token
+        or not assistant_text.rstrip().endswith(eos_token)
+        or eos_token_id not in assistant_ids
+    ):
         return TokenizationOutcome(None, TokenizationDropReason.MISSING_EOS, token_count)
 
     labels = [IGNORE_INDEX] * len(prompt_ids) + full_ids[len(prompt_ids) :]

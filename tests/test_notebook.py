@@ -53,6 +53,20 @@ def test_smoke_mode_is_default_and_bounded():
     assert 'sweep_results[0]["r"] == 8' in source
 
 
+def test_notebook_installs_and_runs_repo_code_with_the_active_kernel():
+    notebook = load_notebook()
+    source = "\n".join(
+        "".join(cell["source"]) for cell in notebook["cells"] if cell["cell_type"] == "code"
+    )
+    assert "%pip install -q -e ." in source
+    assert "%pip install -q -U transformers" in source
+    assert "!pip install" not in source
+    assert "importlib.invalidate_caches()" in source
+    assert "package_path = Path(lora_bench.__file__).resolve()" in source
+    assert "package_path.is_relative_to(Path(REPO_DIR).resolve())" in source
+    assert "!{sys.executable} -m lora_bench.data.cvefixes" in source
+
+
 def test_artifact_download_is_the_final_notebook_action():
     notebook = load_notebook()
     final_cell = notebook["cells"][-1]

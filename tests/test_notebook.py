@@ -52,6 +52,7 @@ def test_run_mode_is_validated_with_smoke_as_the_bounded_default():
     assert "64 if SMOKE_TEST else None" in source
     assert "16 if SMOKE_TEST else None" in source
     assert "PROBE_MAX_STEPS = 2 if SMOKE_TEST else 50" in source
+    assert "PROBE_EVAL_BATCH_SIZE = 4" in source
     assert "ALL_SWEEP_CANDIDATES[:1] if SMOKE_TEST else ALL_SWEEP_CANDIDATES" in source
     assert "expected_candidates = 1 if SMOKE_TEST else 3" in source
     assert "[8] if SMOKE_TEST else [8, 16, 32]" in source
@@ -67,6 +68,11 @@ def test_full_mode_records_reproducible_sweep_and_training_evidence():
     assert source.count('"r": 16, "lora_alpha": 32') == 1
     assert source.count('"r": 32, "lora_alpha": 64') == 1
     assert '"selection_rule": "lowest finite completion-only validation loss"' in source
+    assert 'os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")' in source
+    assert source.index("PYTORCH_CUDA_ALLOC_CONF") < source.index("import torch")
+    assert source.count("prediction_loss_only=True") == 2
+    assert "per_device_eval_batch_size=PROBE_EVAL_BATCH_SIZE" in source
+    assert "per_device_eval_batch_size=FULL_EVAL_BATCH_SIZE" in source
     assert "FULL_EPOCHS = 3" in source
     assert '"completed_optimizer_steps": trainer.state.global_step' in source
     assert '"log_history": trainer.state.log_history' in source

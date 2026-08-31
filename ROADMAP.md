@@ -69,6 +69,12 @@ instead of an implicit boundary.
   fresh 4-bit base model and generated non-empty output. Day 2 remains
   operationally open until the full sweep/training artifact is reviewed.
 
+  **Full-mode capture (2026-08-31):** the notebook now exposes only the
+  validated `RUN_MODE = "smoke" | "full"` control, keeps smoke committed as
+  the default, and records all three fixed-seed probe results, the explicit
+  selection rule, three-epoch metrics/history, fresh 4-bit reload evidence,
+  and per-payload SHA-256 checksums in the private full-training ZIP.
+
 - [ ] **Day 3 — Quantization + benchmark harness.**
   Quantize the fine-tuned model to GGUF or AWQ (ADR entry for whichever is
   picked); repo-side (non-GPU, testable) eval/benchmark harness code:

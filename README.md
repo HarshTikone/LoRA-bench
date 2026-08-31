@@ -111,12 +111,15 @@ rank sweep, entirely inside Colab on the free T4 tier:
 3. **Runtime > Change runtime type > T4 GPU.**
 4. Optional: add an `HF_TOKEN` secret (Colab's key-icon sidebar panel) —
    raises Hub rate limits, not required since the dataset/model are public.
-5. Leave `SMOKE_TEST = True` and run all cells top to bottom. This trains
-   only one rank-8 adapter for two optimizer steps; it cannot silently run
-   the full sweep.
-6. Download `lora_bench_smoke_artifacts.zip` from the final cell and return
-   it for review. Only after that review should `SMOKE_TEST` be set to
-   `False` for the full sweep and training run.
+5. The committed default is `RUN_MODE = "smoke"`. It trains only one
+   rank-8 adapter for two optimizer steps and cannot silently run the full
+   sweep. This path passed on a real T4 at commit `8722bc5`.
+6. For the approved full Day 2 run, use a fresh T4 runtime and change only
+   `RUN_MODE` to `"full"`. This runs ranks 8/16/32 for 50 steps each with
+   seed 42, selects the lowest finite completion-only validation loss, and
+   trains that configuration for three epochs.
+7. Download and privately preserve `lora_bench_training_artifacts.zip`.
+   Return the ZIP for checksum/result review; do not commit adapter weights.
 
 The first returned smoke ZIP verified this path on a Tesla T4 at commit
 `8722bc5`: two rank-8 steps completed, completion-only validation loss was
@@ -124,6 +127,9 @@ finite (`1.2186365`), peak allocated VRAM was `9,274,672,640` bytes, and a
 freshly reloaded adapter generated a non-empty deterministic response. The
 private ZIP's SHA-256 is recorded in `REVIEW.md`; these smoke figures are
 stack-validation evidence, not a rank decision or a quality benchmark.
+Full-mode artifacts add all three probe results, the selected winner,
+three-epoch trainer history, fresh-base reload evidence, and SHA-256 hashes
+for every staged payload file (excluding the checksum manifest itself).
 
 ## Tests
 

@@ -62,6 +62,8 @@ def test_notebook_installs_and_runs_repo_code_with_the_active_kernel():
     assert "%pip install -q -U transformers" in source
     assert "!pip install" not in source
     assert "importlib.invalidate_caches()" in source
+    assert 'source_path = (Path(REPO_DIR) / "src").resolve()' in source
+    assert "sys.path.insert(0, str(source_path))" in source
     assert "package_path = Path(lora_bench.__file__).resolve()" in source
     assert "package_path.is_relative_to(Path(REPO_DIR).resolve())" in source
     assert "!{sys.executable} -m lora_bench.data.cvefixes" in source

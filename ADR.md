@@ -289,11 +289,10 @@ to matter.
 
 **Date:** 2026-08-22 (Day 1 hardening pass)
 
-**The bug:** the dedup key in `filter_records` is `(commit_hash, repo_url,
-cve_id)`, and `split_examples` then shuffled and sliced at the *row*
-level. But a single CVE routinely spans several files fixed in one commit,
-or gets a follow-up fix commit later — both produce multiple rows sharing
-a `cve_id` but not deduped away by that key. Row-level random splitting
+**The bug:** `split_examples` shuffled and sliced at the *row* level. A
+single CVE routinely spans several files fixed in one commit, or gets a
+follow-up fix commit later. Exact-content deduplication preserves those
+genuinely different rows, which share a `cve_id`; row-level random splitting
 therefore could put sibling rows of the same CVE — often the same fix,
 lightly varied — on both sides of the train/test boundary. Every quality
 number Day 4 would report off that test split was inflated by an unknown
@@ -312,8 +311,8 @@ train > val > test).
 The original version above omitted the largest-first sort — groups were
 handed out in shuffled order only. That's fine when group sizes are
 roughly uniform, but this dataset's group sizes are heavy-tailed:
-`filter_records`' dedup key is per changed file, so a CVE fixed across 40
-files is a single 40-row group, and a handful of much larger groups
+exact-content dedup preserves distinct changed-file rows, so a CVE fixed
+across 40 files can be a single 40-row group, and a handful of much larger groups
 alongside many singletons is the *expected* shape, not a corner case. In
 shuffled-only order, a large group lands wherever the shuffle happens to
 put it and can overshoot its split's target with nothing later able to
@@ -400,11 +399,9 @@ to bite in practice, but it's worth stating plainly rather than implying
 the heuristic is exact.
 
 **Alternatives considered:**
-- *Keep row-level splitting, dedup harder instead*: doesn't work — the
-  existing dedup key already treats different files/commits of the same
-  CVE as distinct rows on purpose (they're genuinely different training
-  examples), so deduping them away would just lose data rather than fix
-  the leak.
+- *Keep row-level splitting, dedup harder instead*: doesn't work — treating
+  different files/commits of the same CVE as duplicates loses genuinely
+  different training examples rather than fixing the split leak.
 - *Group by (repo_url, cve_id) instead of cve_id alone*: rejected as
   redundant — the leak mechanism described above is CVE-level, and this
   wouldn't catch anything CVE-level grouping doesn't already catch, since

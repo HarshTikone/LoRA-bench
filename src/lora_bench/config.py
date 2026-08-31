@@ -8,6 +8,8 @@ shape is defined once here rather than re-parsed ad hoc in each script.
 from __future__ import annotations
 
 import dataclasses
+import math
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -112,6 +114,22 @@ class DataConfig:
     seed: int = 42
 
     def __post_init__(self) -> None:
+        for name in ("dataset_name", "dataset_split", "revision"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{name} must be a non-empty string, got {value!r}")
+        if not isinstance(self.languages, list) or not self.languages:
+            raise ValueError("languages must be a non-empty list of non-empty strings")
+        if any(not isinstance(v, str) or not v.strip() for v in self.languages):
+            raise ValueError("languages must contain only non-empty strings")
+        for name in ("min_chars", "max_chars", "max_combined_chars", "seed"):
+            value = getattr(self, name)
+            if type(value) is not int:
+                raise ValueError(f"{name} must be an integer, got {value!r}")
+        if self.max_examples is not None and type(self.max_examples) is not int:
+            raise ValueError(f"max_examples must be an integer or null, got {self.max_examples!r}")
+        if not isinstance(self.drop_noop_pairs, bool):
+            raise ValueError(f"drop_noop_pairs must be a boolean, got {self.drop_noop_pairs!r}")
         if self.min_chars < 0:
             raise ValueError(f"min_chars must be >= 0, got {self.min_chars}")
         if self.max_chars <= self.min_chars:
@@ -124,8 +142,14 @@ class DataConfig:
                 f"({2 * self.min_chars}) — otherwise no pair of fields could ever pass "
                 "both the per-field min_chars check and the combined-length check."
             )
-        if not self.languages:
-            raise ValueError("languages must be a non-empty list")
+        for name in ("train_ratio", "val_ratio", "test_ratio"):
+            value = getattr(self, name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+            ):
+                raise ValueError(f"{name} must be a finite number, got {value!r}")
         ratio_sum = self.train_ratio + self.val_ratio + self.test_ratio
         if abs(ratio_sum - 1.0) > _EPS:
             raise ValueError(
@@ -149,6 +173,12 @@ class ModelConfig:
     base_model: str = "Qwen/Qwen2.5-Coder-1.5B-Instruct"
     max_seq_len: int = 1024
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.base_model, str) or not self.base_model.strip():
+            raise ValueError(f"base_model must be a non-empty string, got {self.base_model!r}")
+        if type(self.max_seq_len) is not int or self.max_seq_len <= 0:
+            raise ValueError(f"max_seq_len must be a positive integer, got {self.max_seq_len!r}")
+
 
 @dataclass
 class LoRAConfig:
@@ -169,14 +199,26 @@ class LoRAConfig:
     )
 
     def __post_init__(self) -> None:
+        if type(self.r) is not int:
+            raise ValueError(f"r (LoRA rank) must be an integer, got {self.r!r}")
+        if type(self.alpha) is not int:
+            raise ValueError(f"alpha must be an integer, got {self.alpha!r}")
+        if (
+            isinstance(self.dropout, bool)
+            or not isinstance(self.dropout, (int, float))
+            or not math.isfinite(self.dropout)
+        ):
+            raise ValueError(f"dropout must be a finite number, got {self.dropout!r}")
+        if not isinstance(self.target_modules, list) or not self.target_modules:
+            raise ValueError("target_modules must be a non-empty list of non-empty strings")
+        if any(not isinstance(v, str) or not v.strip() for v in self.target_modules):
+            raise ValueError("target_modules must contain only non-empty strings")
         if self.r <= 0:
             raise ValueError(f"r (LoRA rank) must be > 0, got {self.r}")
         if self.alpha <= 0:
             raise ValueError(f"alpha must be > 0, got {self.alpha}")
         if not (0.0 <= self.dropout < 1.0):
             raise ValueError(f"dropout must be within [0, 1), got {self.dropout}")
-        if not self.target_modules:
-            raise ValueError("target_modules must be a non-empty list")
 
 
 @dataclass
@@ -219,13 +261,16 @@ class Config:
             )
 
 
-def _build_section(cls: type, raw: dict[str, Any] | None) -> Any:
-    raw = raw or {}
+def _build_section(cls: type, raw: Mapping[str, Any] | None) -> Any:
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"{cls.__name__} section must be a mapping, got {type(raw).__name__}")
     known = {f.name for f in dataclasses.fields(cls)}
     unknown = set(raw) - known
     if unknown:
         raise ValueError(f"Unknown {cls.__name__} field(s): {sorted(unknown)}")
-    return cls(**raw)
+    return cls(**dict(raw))
 
 
 def load_config(path: str | Path) -> Config:
@@ -236,7 +281,12 @@ def load_config(path: str | Path) -> Config:
     """
     path = Path(path)
     with path.open("r", encoding="utf-8") as f:
-        raw = yaml.safe_load(f) or {}
+        raw = yaml.safe_load(f)
+
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"Config root must be a mapping, got {type(raw).__name__}")
 
     known_sections = {"data", "model", "lora"}
     unknown_sections = set(raw) - known_sections

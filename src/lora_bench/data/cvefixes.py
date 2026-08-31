@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import json
 import random
 import sys
@@ -182,6 +183,32 @@ def clean_record(raw: dict, cfg: DataConfig) -> tuple[dict | None, DropReason | 
     )
 
 
+def _record_fingerprint(rec: dict[str, Any]) -> str:
+    """Stable identity for exact cleaned examples.
+
+    Identifiers alone are not sufficient: CVEfixes can contain several
+    changed-file rows for one repository/commit/CVE. Include the code and
+    diff so those distinct examples survive while byte-identical source
+    duplicates remain removable and auditable.
+    """
+    identity_fields = (
+        "repo_url",
+        "commit_hash",
+        "cve_id",
+        "language",
+        "vulnerable_code",
+        "fixed_code",
+        "diff",
+    )
+    canonical = json.dumps(
+        {field: rec[field] for field in identity_fields},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
 def filter_records(raw_records: Iterable[dict], cfg: DataConfig) -> tuple[list[dict], Counter]:
     """clean_record() over every row, then dedup and (optionally) cap.
 
@@ -191,9 +218,10 @@ def filter_records(raw_records: Iterable[dict], cfg: DataConfig) -> tuple[list[d
     rows) would just produce a smaller output file with no signal that
     anything went wrong — see run_pipeline/main, which surface this Counter.
 
-    Dedup key is (commit_hash, repo_url, cve_id): the same fix commit can
-    appear more than once if the source dataset has one row per changed
-    file. Capping samples uniformly at random (seeded) from the full
+    Dedup uses a stable fingerprint of identifiers, language, both code
+    fields, and diff. The identifiers alone cannot be the key because one
+    fix commit can legitimately contribute several changed-file rows.
+    Capping samples uniformly at random (seeded) from the full
     filtered set rather than taking the first N, since source rows are
     grouped by repo and truncating in dataset order would skew the kept
     examples toward whichever repos happen to sort first. Rows dropped by
@@ -203,7 +231,7 @@ def filter_records(raw_records: Iterable[dict], cfg: DataConfig) -> tuple[list[d
     max_examples in a confusing way.
     """
     drop_counts: Counter = Counter()
-    seen: set[tuple[str, str, str]] = set()
+    seen: set[str] = set()
     cleaned: list[dict] = []
     for raw in raw_records:
         rec, reason = clean_record(raw, cfg)
@@ -211,7 +239,7 @@ def filter_records(raw_records: Iterable[dict], cfg: DataConfig) -> tuple[list[d
             assert reason is not None
             drop_counts[reason.value] += 1
             continue
-        key = (rec["commit_hash"], rec["repo_url"], rec["cve_id"])
+        key = _record_fingerprint(rec)
         if key in seen:
             drop_counts[DropReason.DUPLICATE.value] += 1
             continue

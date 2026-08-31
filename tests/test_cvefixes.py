@@ -292,6 +292,38 @@ def test_filter_records_cap_does_not_inflate_drop_counts():
     assert sum(drop_counts.values()) == 6  # same 6 quality-drops as the uncapped run above
 
 
+def test_filter_records_removes_an_exact_duplicate():
+    row = make_raw()
+    cleaned, drop_counts = filter_records([row, dict(row)], DataConfig(max_examples=None))
+    assert len(cleaned) == 1
+    assert drop_counts == {DropReason.DUPLICATE.value: 1}
+
+
+def test_filter_records_preserves_distinct_files_from_one_fix_commit():
+    first = make_raw(vulnerable_code="a" * 30, fixed_code="b" * 30, diff_with_context="a -> b")
+    second = make_raw(vulnerable_code="c" * 30, fixed_code="d" * 30, diff_with_context="c -> d")
+    cleaned, drop_counts = filter_records([first, second], DataConfig(max_examples=None))
+    assert len(cleaned) == 2
+    assert not drop_counts
+
+
+def test_follow_up_commits_survive_and_stay_in_one_split():
+    rows = [
+        make_raw(hash="first", vulnerable_code="a" * 30, fixed_code="b" * 30),
+        make_raw(hash="follow-up", vulnerable_code="c" * 30, fixed_code="d" * 30),
+    ]
+    siblings, drop_counts = build_dataset(rows, DataConfig(max_examples=None))
+    fillers = _dummy_examples(20)
+    train, val, test = split_examples(siblings + fillers, DataConfig())
+    containing = [
+        split for split in (train, val, test) if any(e.cve_id == "CVE-2099-0000" for e in split)
+    ]
+    assert not drop_counts
+    assert len(siblings) == 2
+    assert len(containing) == 1
+    assert sum(e.cve_id == "CVE-2099-0000" for e in containing[0]) == 2
+
+
 # --- to_example / build_dataset -------------------------------------------
 
 
@@ -418,8 +450,8 @@ def _heavy_tailed_grouped_examples(
     """Synthetic examples with realistic heavy-tailed group-size skew: mostly
     singletons, plus a handful of groups one-to-two orders of magnitude
     larger. This is the shape that actually occurs here: filter_records'
-    dedup key is (commit_hash, repo_url, cve_id), one row per changed file,
-    so a single CVE fixed across 40 files is a single 40-row group.
+    exact-content dedup preserves distinct changed-file rows, so a single
+    CVE fixed across 40 files can form a single 40-row group.
 
     _grouped_examples above only ever draws sizes up to 3 -- comfortably
     within noise for the greedy split, and unable to exercise the failure

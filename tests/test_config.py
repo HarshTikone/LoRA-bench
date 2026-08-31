@@ -36,6 +36,42 @@ def test_load_config_empty_file_uses_all_defaults(tmp_path):
     assert load_config(p) == Config()
 
 
+@pytest.mark.parametrize("contents", ["[]\n", "42\n", "plain-string\n"])
+def test_load_config_rejects_non_mapping_root(tmp_path, contents):
+    p = tmp_path / "bad.yaml"
+    p.write_text(contents, encoding="utf-8")
+    with pytest.raises(ValueError, match="Config root must be a mapping"):
+        load_config(p)
+
+
+@pytest.mark.parametrize("contents", ["data: []\n", "model: value\n", "lora: 3\n"])
+def test_load_config_rejects_non_mapping_section(tmp_path, contents):
+    p = tmp_path / "bad.yaml"
+    p.write_text(contents, encoding="utf-8")
+    with pytest.raises(ValueError, match="section must be a mapping"):
+        load_config(p)
+
+
+@pytest.mark.parametrize(
+    "contents,match",
+    [
+        ("data:\n  languages: Python\n", "languages"),
+        ("data:\n  drop_noop_pairs: 1\n", "drop_noop_pairs"),
+        ("data:\n  max_chars: '4000'\n", "max_chars"),
+        ("data:\n  train_ratio: .nan\n", "train_ratio"),
+        ("model:\n  max_seq_len: 0\n", "max_seq_len"),
+        ("model:\n  base_model: ''\n", "base_model"),
+        ("lora:\n  target_modules: q_proj\n", "target_modules"),
+        ("lora:\n  dropout: .inf\n", "dropout"),
+    ],
+)
+def test_load_config_rejects_malformed_field_types(tmp_path, contents, match):
+    p = tmp_path / "bad.yaml"
+    p.write_text(contents, encoding="utf-8")
+    with pytest.raises(ValueError, match=match):
+        load_config(p)
+
+
 @pytest.mark.parametrize(
     "kwargs",
     [

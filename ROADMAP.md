@@ -42,7 +42,7 @@ instead of an implicit boundary.
   argument in this repo for never skipping the review step — noted here
   explicitly so it isn't lost to a git log nobody rereads.
 
-- [x] **Day 2 — LoRA/QLoRA fine-tuning (Colab, GPU): notebook built, not yet run.**
+- [x] **Day 2 — LoRA/QLoRA fine-tuning (Colab, GPU): smoke validated, full run pending.**
   `notebooks/finetune.ipynb`: runs Day 1's data prep inside Colab, QLoRA
   fine-tunes Qwen2.5-Coder-1.5B-Instruct (bitsandbytes 4-bit + PEFT), runs
   a 3-candidate LoRA rank sweep (r=8/16/32, compared by validation loss)
@@ -52,23 +52,22 @@ instead of an implicit boundary.
   source of truth for prompt rendering, shared by `scripts/token_budget.py`
   and the notebook, so they can't silently diverge.
 
-  **What's still open:** this repo-side environment has no GPU, so the
-  notebook could be built, unit-tested where CPU-testable (chat rendering,
-  tokenizer/dataset construction, all validated in a throwaway CPU venv
-  against the real installed library versions), and reviewed for
-  correctness — but not actually run. No sweep results, no winning
-  hyperparameters, no adapter weights, no ADR-0006 exist yet. Those need a
-  human to run the notebook in a live Colab T4 session and bring the
-  results back; see the notebook's "Next" section and `README.md`.
+  **What's still open:** the bounded smoke run passed on a real Colab T4 at
+  commit `8722bc5`, but the three-candidate sweep and three-epoch training
+  have not run. No winning hyperparameters, production adapter, or ADR-0006
+  exists yet. Those require the reviewed full-mode notebook to run in a
+  fresh Colab T4 session and return its private artifact ZIP.
 
   **Next-phase hardening (2026-08-30):** fixed identifier-only
   deduplication that discarded distinct files from the same fix, added
   runtime config-type validation, and moved exact token-length filtering,
   completion-only labels, and padding into tested package code. The
   notebook now defaults to a bounded rank-8/two-step smoke mode and packages
-  all evidence into one ZIP. Day 2 remains operationally open until that
-  smoke ZIP is produced on a real T4 and reviewed; the full sweep stays
-  disabled by default until then.
+  all evidence into one ZIP. The returned smoke artifact passed review on
+  2026-08-31: rank 8 trained for exactly two steps, validation loss was
+  finite, peak allocated VRAM was 9.27 GB, and the adapter reloaded into a
+  fresh 4-bit base model and generated non-empty output. Day 2 remains
+  operationally open until the full sweep/training artifact is reviewed.
 
 - [ ] **Day 3 — Quantization + benchmark harness.**
   Quantize the fine-tuned model to GGUF or AWQ (ADR entry for whichever is

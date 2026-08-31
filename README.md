@@ -8,12 +8,11 @@ else (data prep, config, the eval/benchmark harness) is plain, unit-tested
 Python that runs here, with no GPU.
 
 **Status:** Day 1 and the local Day 2 hardening are done. The fine-tuning
-notebook (`notebooks/finetune.ipynb`) now defaults to a two-step T4 smoke
-test with exact token-length filtering and completion-only loss, but
-**has not actually been run yet** — it needs a live Colab T4 session this
-environment doesn't have. No comparison numbers, full sweep results, or
-production adapter weights exist until the smoke artifact is reviewed and
-the later full run is deliberately enabled.
+notebook (`notebooks/finetune.ipynb`) completed its bounded two-step smoke
+test on a real Colab T4 at commit `8722bc5`, including 4-bit load, training,
+finite completion-only validation loss, adapter reload, and generation.
+The three-rank sweep and full training run are still pending, so there are
+no comparison numbers or production adapter weights yet.
 See [ROADMAP.md](ROADMAP.md) for what's next and [ADR.md](ADR.md) for why
 the model/dataset were chosen.
 
@@ -26,7 +25,7 @@ run, never a fabricated placeholder.
 | Piece | Runs where | Status |
 |---|---|---|
 | Data prep (CVEfixes -> instruction JSONL) | here (CPU, tested) | done (Day 1) |
-| LoRA/QLoRA fine-tune + rank sweep | Colab notebook (T4) | hardened smoke test ready, **not yet run** (Day 2) |
+| LoRA/QLoRA fine-tune + rank sweep | Colab notebook (T4) | smoke validated; full sweep/training pending (Day 2) |
 | GGUF/AWQ quantization | Colab notebook (T4) | not started (Day 3) |
 | Eval/benchmark harness (quality/latency/memory/cost) | here (CPU, tested) + Colab (GPU run) | not started (Day 3) |
 | End-to-end notebook + report | Colab notebook (T4) | not started (Day 4) |
@@ -119,11 +118,12 @@ rank sweep, entirely inside Colab on the free T4 tier:
    it for review. Only after that review should `SMOKE_TEST` be set to
    `False` for the full sweep and training run.
 
-This environment has no GPU, so the 4-bit load/train/reload path **cannot
-be verified here**. The ZIP includes the adapter, manifests, exact-token
-drop counters, trainer history, validation loss, generation sample, GPU
-information, peak VRAM, package versions, and git SHA. Every GPU-derived
-number stays unmeasured until that artifact comes back from a real run.
+The first returned smoke ZIP verified this path on a Tesla T4 at commit
+`8722bc5`: two rank-8 steps completed, completion-only validation loss was
+finite (`1.2186365`), peak allocated VRAM was `9,274,672,640` bytes, and a
+freshly reloaded adapter generated a non-empty deterministic response. The
+private ZIP's SHA-256 is recorded in `REVIEW.md`; these smoke figures are
+stack-validation evidence, not a rank decision or a quality benchmark.
 
 ## Tests
 

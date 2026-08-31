@@ -206,3 +206,41 @@ that review succeeds.
 
 Local hardening passes. T4 smoke validation is the only blocking gate for
 enabling the full Day 2 run.
+
+---
+
+# Review — Colab T4 smoke validation — 2026-08-31
+
+Artifact: private `lora_bench_smoke_artifacts.zip` returned from a fresh
+Colab Tesla T4 run of commit `8722bc5bb18499ca2ab70291bb7cd88c55fefc8a`.
+ZIP SHA-256:
+`5d68bd9f403b67437dacdec5b614aebb7ff719d0cb506d78c785b1d830061d8e`.
+
+## Passed
+
+- Dataset revision `d4f5c4ea65329d9ccbb8a3b3149e5d06eda5edb2` and git
+  provenance match the committed configuration and run metadata.
+- Smoke mode retained 64 training and 16 validation examples. Three
+  over-budget training examples were dropped without truncation; all 300
+  validation examples were eligible before the smoke limit.
+- Exactly one rank-8/alpha-16 candidate ran for two optimizer steps with
+  finite losses: training loss `0.7287055`, completion-only validation loss
+  `1.2186365`, and finite gradient norms.
+- Four-bit QLoRA training and fresh-base adapter reload completed on a
+  Tesla T4. Peak allocated VRAM was `9,274,672,640` bytes, below the
+  reported `15,360 MiB` device capacity. Total notebook elapsed time was
+  `221.65` seconds.
+- The reloaded adapter produced a non-empty deterministic generation.
+- The ZIP contains adapter configuration, tokenizer files, an 8.75 MB
+  safetensors weight file, manifests, preprocessing counters, trainer
+  history, dependency/GPU metadata, and generation evidence. The weight
+  header contains 224 F32 LoRA tensors with shapes consistent with rank 8;
+  every archive entry decompressed and hashed successfully.
+- Local regression suite after the two Colab-only repairs: 151 passed;
+  Ruff lint and format checks pass.
+
+## Verdict
+
+Sprint 5 passes. The smoke figures validate the stack only and are not a
+rank decision or benchmark. The full rank sweep may now be implemented and
+run; adapter weights remain private.

@@ -61,6 +61,15 @@ instead of an implicit boundary.
   human to run the notebook in a live Colab T4 session and bring the
   results back; see the notebook's "Next" section and `README.md`.
 
+  **Next-phase hardening (2026-08-30):** fixed identifier-only
+  deduplication that discarded distinct files from the same fix, added
+  runtime config-type validation, and moved exact token-length filtering,
+  completion-only labels, and padding into tested package code. The
+  notebook now defaults to a bounded rank-8/two-step smoke mode and packages
+  all evidence into one ZIP. Day 2 remains operationally open until that
+  smoke ZIP is produced on a real T4 and reviewed; the full sweep stays
+  disabled by default until then.
+
 - [ ] **Day 3 — Quantization + benchmark harness.**
   Quantize the fine-tuned model to GGUF or AWQ (ADR entry for whichever is
   picked); repo-side (non-GPU, testable) eval/benchmark harness code:

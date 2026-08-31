@@ -167,3 +167,42 @@ Full suite re-verified after both fixes: 119 passed; `ruff check .` and
 ## Verdict
 
 No blocking items — day may be closed out.
+
+---
+
+# Review — Next-phase local hardening — 2026-08-30
+
+Scope: preserve distinct multi-file fixes, enforce config field types,
+replace truncating/full-sequence preprocessing with exact-length,
+completion-only package code, and add a bounded Colab smoke mode.
+
+## Passed locally
+
+- Exact duplicate records are removed by a stable content fingerprint;
+  distinct code/diff rows sharing a repository, commit, and CVE survive.
+- YAML roots, sections, and typed fields reject malformed values with
+  actionable errors.
+- `tokenize_training_example` never truncates: it validates the prompt
+  prefix, drops over-budget examples, requires terminal EOS, and masks all
+  prompt labels with `-100`.
+- `CompletionOnlyDataCollator` preserves assistant labels and masks padding;
+  torch remains a lazy Colab-only import.
+- Smoke mode is bounded to 64 retained training examples, 16 validation
+  examples, one rank-8 candidate, and two optimizer steps. The final cell
+  packages manifests, counters, logs, adapter files, environment data,
+  peak VRAM, and a reloaded-adapter generation into one ZIP.
+- Python 3.11 suite: 148 passed; Ruff lint and format checks pass; all
+  notebook Python cells parse after accounting for Colab magics.
+
+## Open GPU gate
+
+The bitsandbytes 4-bit load, two optimizer steps, finite validation loss,
+peak T4 memory, adapter reload, and generation remain unverified until the
+user runs the default smoke mode in a live Colab T4 session and returns
+`lora_bench_smoke_artifacts.zip`. The full sweep must remain disabled until
+that review succeeds.
+
+## Verdict
+
+Local hardening passes. T4 smoke validation is the only blocking gate for
+enabling the full Day 2 run.
